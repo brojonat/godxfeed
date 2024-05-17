@@ -1,0 +1,16 @@
+meta {
+  name: get session token
+  type: http
+  seq: 5
+}
+
+get {
+  url: http://localhost:8080/session-token?username=brojonat&password={{password}}
+  body: none
+  auth: none
+}
+
+query {
+  username: brojonat
+  password: {{password}}
+}

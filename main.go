@@ -1,7 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"log/slog"
+	"os"
+)
 
 func main() {
-	fmt.Println("welcome to the godxfeed library")
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger.Info("welcome to the godxfeed library")
 }

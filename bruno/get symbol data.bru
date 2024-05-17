@@ -1,0 +1,15 @@
+meta {
+  name: get symbol data
+  type: http
+  seq: 4
+}
+
+get {
+  url: api.tastyworks.com/option-chains/SPY
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: {{session_token}}
+}
