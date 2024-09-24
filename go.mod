@@ -1,6 +1,6 @@
 module github.com/brojonat/godxfeed
 
-go 1.21.6
+go 1.23.0
 
 require (
 	github.com/brojonat/websocket v0.0.0-20240410014128-3a433ef1c057
