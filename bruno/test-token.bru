@@ -1,0 +1,19 @@
+meta {
+  name: test-token
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{ENDPOINT}}/test-session-token?session-token=Gv-UuFH9FfZaeNBlk7ef-n3CniC3yhDrLMG6TzoSO46ObYyAvVBHkA%2bC
+  body: none
+  auth: none
+}
+
+query {
+  session-token: Gv-UuFH9FfZaeNBlk7ef-n3CniC3yhDrLMG6TzoSO46ObYyAvVBHkA%2bC
+}
+
+headers {
+  Authorization: Bearer {{AUTH_TOKEN}}
+}

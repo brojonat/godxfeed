@@ -1,0 +1,12 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries:
+      - "sqlc/queries.sql"
+    schema: "sqlc/schema.sql"
+    gen:
+      go:
+        package: "dbgen"
+        out: "db/dbgen"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
