@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 
@@ -475,10 +474,6 @@ func (c *client) SetLogger(v any) error {
 }
 
 func (c *client) Log(level int, s string, args ...any) {
-	_, f, l, ok := runtime.Caller(1)
-	if ok {
-		args = append(args, "caller_source", fmt.Sprintf("%s %d", f, l))
-	}
 	switch level {
 	case int(slog.LevelDebug):
 		c.logger.Debug(s, args...)

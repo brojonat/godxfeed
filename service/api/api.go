@@ -1,16 +1,23 @@
-package tastytrade
+package api
 
-import "encoding/json"
+// package api provides the structs used to interact with the godxlink service
+
+import (
+	"encoding/json"
+)
+
+const (
+	SYMBOL_TYPE_CRYPTO          = "crypto"
+	SYMBOL_TYPE_FUTURES         = "futures"
+	SYMBOL_TYPE_EQUITIES        = "equities"
+	SYMBOL_TYPE_OPTIONS         = "options"
+	SYMBOL_TYPE_FUTURES_OPTIONS = "futures-options"
+)
 
 type Response struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 	Error   Error           `json:"error,omitempty"`
 	Context string          `json:"context,omitempty"`
-}
-
-type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
 }
 
 type TokenData struct {

@@ -1,2 +1,5 @@
 *.env
+*.env.*
 cli
+.vscode
+todo.txt

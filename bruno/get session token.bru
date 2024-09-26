@@ -5,12 +5,12 @@ meta {
 }
 
 get {
-  url: http://localhost:8080/session-token?username=brojonat&password={{password}}
+  url: http://localhost:8080/session-token?username=brojonat&password={{TW_PASSWORD}}
   body: none
   auth: none
 }
 
 query {
   username: brojonat
-  password: {{password}}
+  password: {{TW_PASSWORD}}
 }
