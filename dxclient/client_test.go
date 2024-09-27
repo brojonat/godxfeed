@@ -2,6 +2,7 @@ package dxclient_test
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/brojonat/godxfeed/dxclient"
@@ -25,7 +26,20 @@ func TestClientSetup(t *testing.T) {
 		testServerDone <- runMockServer(ctx, mockServerAddr)
 	}()
 
-	c := dxclient.NewClient()
+	// setup the client
+	logfunc := func(lvl int, msg string, args ...any) {
+		switch lvl {
+		case int(slog.LevelDebug):
+			slog.Debug(msg, args...)
+		case int(slog.LevelInfo):
+			slog.Info(msg, args...)
+		case int(slog.LevelWarn):
+			slog.Warn(msg, args...)
+		case int(slog.LevelError):
+			slog.Error(msg, args...)
+		}
+	}
+	c := dxclient.NewClient(logfunc)
 
 	// dial the client; this will also send the keepalive and setup messages
 	is.NoErr(c.Dial(ctx, "ws://localhost:8080/ws",

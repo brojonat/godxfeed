@@ -4,6 +4,8 @@ package api
 
 import (
 	"encoding/json"
+
+	"github.com/brojonat/godxfeed/dxclient"
 )
 
 const (
@@ -78,4 +80,11 @@ const CLIENT_MESSAGE_TYPE_UNSUBSCRIBE = "unsubscribe"
 type ClientMessage struct {
 	Type string          `json:"type"`
 	Body json.RawMessage `json:"body"`
+}
+
+// this is an "enhanced" version of the dxclient.FeedCompactQuote data
+type FeedCompactQuote struct {
+	dxclient.FeedCompactQuote
+	AskPriceTheo float64 `json:"askPriceTheo"`
+	BidPriceTheo float64 `json:"bidPriceTheo"`
 }

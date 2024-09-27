@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
-	"github.com/brojonat/godxfeed/service/api"
 	"github.com/urfave/cli/v2"
 )
 
@@ -16,12 +14,7 @@ func get_symbol_data(ctx *cli.Context) error {
 		return err
 	}
 	return writeCLIResponse(
-		tts.GetSymbolData(
-			ctx.String("tastyworks-endpoint"),
-			ctx.String("session-token"),
-			ctx.String("symbol"),
-			ctx.String("symbol-type"),
-		))
+		tts.GetSymbolData(ctx.String("symbol"), ctx.String("symbol-type")))
 }
 
 func get_option_chain(ctx *cli.Context) error {
@@ -31,13 +24,7 @@ func get_option_chain(ctx *cli.Context) error {
 		return err
 	}
 	return writeCLIResponse(
-		tts.GetOptionChain(
-			ctx.String("tastyworks-endpoint"),
-			ctx.String("session-token"),
-			ctx.String("symbol"),
-			ctx.Bool("nested"),
-			ctx.Bool("compact"),
-		))
+		tts.GetOptionChain(ctx.String("symbol")))
 }
 
 func stream_symbol(ctx *cli.Context) error {
@@ -46,13 +33,10 @@ func stream_symbol(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	// Get symbols. Only streaming top SYMBOL_COUNT symbols for now; will have to chunk
-	// subscription calls in the future.
-	syms, err := tts.GetRelatedSymbols(
-		ctx.String("tastyworks-endpoint"),
-		ctx.String("session-token"),
-		ctx.String("symbol"),
-	)
+	// Get symbols. Only streaming top SYMBOL_COUNT symbols for now; will have
+	// to chunk subscription calls in the future since they apparently limit the
+	// number you can subscribe to at once.
+	syms, err := tts.GetRelatedSymbols(ctx.String("symbol"))
 	if err != nil {
 		return fmt.Errorf("could not get symbol data: %v", err)
 	}
@@ -61,20 +45,8 @@ func stream_symbol(ctx *cli.Context) error {
 	}
 	syms = syms[0:ctx.Int("symbol-count")]
 
-	// get streamer credentials
-	twr, err := tts.NewStreamerToken(ctx.String("tastyworks-endpoint"), ctx.String("session-token"))
-	if err != nil {
-		return fmt.Errorf("could not get streamer token: %w", err)
-	}
-	var dxData api.TokenData
-	if err := json.Unmarshal(twr.Data, &dxData); err != nil {
-		return fmt.Errorf("could not unmarshal dx token data: %w", err)
-	}
-
 	// stream
-	// FIXME: TastyWorks isn't actually serving the options data just yet, so the vanilla
-	// symbol will have to do for now
-	c, err := tts.StreamSymbols(ctx.Context, dxData.DXLinkURL, dxData.Token, syms)
+	c, err := tts.StreamSymbols(ctx.Context, syms)
 	if err != nil {
 		return fmt.Errorf("could not get stream symbol data: %w", err)
 	}

@@ -23,7 +23,12 @@ func setupService(ctx *cli.Context) (service.Service, error) {
 	minimalSetup, ok := ctx.Context.Value(ctxKeyMinimalSetup).(bool)
 	if ok && minimalSetup {
 		l.Debug("initializing service with minimal dependencies")
-		tts := service.NewService(l, nil, nil, nil)
+		tts := service.NewService(
+			ctx.String("tastyworks-endpoint"),
+			ctx.String("session-token"),
+			ctx.String("dxfeed-endpoint"),
+			ctx.String("streamer-token"),
+			l, nil, nil, nil)
 		return tts, nil
 	}
 
@@ -46,7 +51,13 @@ func setupService(ctx *cli.Context) (service.Service, error) {
 	}
 	q := dbgen.New(p)
 
-	tts := service.NewService(l, tc, p, q)
+	tts := service.NewService(
+		ctx.String("tastyworks-endpoint"),
+		ctx.String("session-token"),
+		ctx.String("dxfeed-endpoint"),
+		ctx.String("streamer-token"),
+		l, tc, p, q,
+	)
 	return tts, nil
 }
 
@@ -61,7 +72,7 @@ func serve_http(ctx *cli.Context) error {
 		ctx.String("listen-port"),
 		ctx.String("tastyworks-endpoint"),
 		ctx.String("session-token"),
-		ctx.String("streamer-endpoint"),
+		ctx.String("dxfeed-endpoint"),
 		ctx.String("streamer-token"),
 	)
 }

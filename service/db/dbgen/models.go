@@ -4,6 +4,21 @@
 
 package dbgen
 
+import (
+	jsonb "github.com/brojonat/godxfeed/service/db/jsonb"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
 type Metadatum struct {
-	ID string `json:"id"`
+	Symbol string             `json:"symbol"`
+	Data   jsonb.MetadataJSON `json:"data"`
+}
+
+type SymbolBidAsk struct {
+	Symbol   string             `json:"symbol"`
+	Ts       pgtype.Timestamptz `json:"ts"`
+	BidPrice float64            `json:"bid_price"`
+	BidSize  float64            `json:"bid_size"`
+	AskPrice float64            `json:"ask_price"`
+	AskSize  float64            `json:"ask_size"`
 }

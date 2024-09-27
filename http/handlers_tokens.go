@@ -32,31 +32,30 @@ func handleIssueToken(s service.Service) http.HandlerFunc {
 	}
 }
 
-func handleTestSessionToken(s service.Service, endpoint string) http.HandlerFunc {
+func handleTestSessionToken(s service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		st := r.URL.Query().Get("session-token")
 		if st == "" {
 			writeBadRequestError(w, fmt.Errorf("must supply session-token"))
 			return
 		}
-		twr, err := s.TestSessionToken(endpoint, st)
+		twr, err := s.TestSessionToken(st)
 		writeServiceResponse(s, w, twr, err)
 	}
 }
 
-func handleNewSessionToken(s service.Service, endpoint string) http.HandlerFunc {
+func handleNewSessionToken(s service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u := r.URL.Query()["username"][0]
 		p := r.URL.Query()["password"][0]
-		twr, err := s.NewSessionToken(endpoint, u, p)
+		twr, err := s.NewSessionToken(u, p)
 		writeServiceResponse(s, w, twr, err)
 	}
 }
 
-func handleNewStreamerToken(s service.Service, endpoint string) http.HandlerFunc {
+func handleNewStreamerToken(s service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sessionToken := r.URL.Query()["session-token"][0]
-		twr, err := s.NewStreamerToken(endpoint, sessionToken)
+		twr, err := s.NewStreamerToken()
 		writeServiceResponse(s, w, twr, err)
 	}
 }

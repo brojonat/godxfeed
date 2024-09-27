@@ -2,7 +2,8 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries:
-      - "sqlc/queries.sql"
+      - "sqlc/metadata.sql"
+      - "sqlc/symbols.sql"
     schema: "sqlc/schema.sql"
     gen:
       go:
@@ -10,3 +11,17 @@ sql:
         out: "db/dbgen"
         sql_package: "pgx/v5"
         emit_json_tags: true
+        overrides:
+          - column: "metadata.data"
+            go_type:
+              import: "github.com/brojonat/godxfeed/service/db/jsonb"
+              package: "jsonb"
+              type: "MetadataJSON"
+          - column: "symbol_bid_ask.bid_price"
+            go_type: "float64"
+          - column: "symbol_bid_ask.bid_size"
+            go_type: "float64"
+          - column: "symbol_bid_ask.ask_price"
+            go_type: "float64"
+          - column: "symbol_bid_ask.ask_size"
+            go_type: "float64"
