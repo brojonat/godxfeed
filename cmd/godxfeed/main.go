@@ -159,18 +159,6 @@ func main() {
 								Value:   "SPY",
 								Usage:   "Equity symbol of the option chain.",
 							},
-							&cli.BoolFlag{
-								Name:    "compact",
-								Aliases: []string{"c"},
-								Value:   false,
-								Usage:   "Use `compact` format.",
-							},
-							&cli.BoolFlag{
-								Name:    "nested",
-								Aliases: []string{"n"},
-								Value:   false,
-								Usage:   "Use `nested` format.",
-							},
 						},
 						Action: func(ctx *cli.Context) error {
 							return get_option_chain(ctx)
@@ -249,7 +237,7 @@ func main() {
 								Value:   "api.tastyworks.com",
 							},
 							&cli.StringFlag{
-								Name:    "streamer-endpoint",
+								Name:    "dxfeed-endpoint",
 								Aliases: []string{"se"},
 								Usage:   "DXLINK streaming endpoint.",
 								Value:   "tasty-openapi-ws.dxfeed.com/realtime",
@@ -281,7 +269,7 @@ func main() {
 						Usage: "Truncate logs below this level (uses slog levels, -4 for debug and above).",
 					},
 					&cli.StringFlag{
-						Name:  "streamer-endpoint",
+						Name:  "dxfeed-endpoint",
 						Value: "tasty-openapi-ws.dxfeed.com/realtime",
 						Usage: "DXLINK WS endpoint.",
 					},
@@ -310,7 +298,7 @@ func main() {
 
 func debug_dxlink(ctx *cli.Context) error {
 	sym := strings.ToUpper(ctx.String("symbol"))
-	url := fmt.Sprintf("wss://%s", ctx.String("streamer-endpoint"))
+	url := fmt.Sprintf("wss://%s", ctx.String("dxfeed-endpoint"))
 	token := ctx.String("streamer-token")
 
 	lvl := new(slog.LevelVar)
@@ -318,7 +306,20 @@ func debug_dxlink(ctx *cli.Context) error {
 		lvl.Set(slog.Level(level))
 	}
 
-	c := dx.NewClient()
+	logfunc := func(lvl int, msg string, args ...any) {
+		switch lvl {
+		case int(slog.LevelDebug):
+			slog.Debug(msg, args...)
+		case int(slog.LevelInfo):
+			slog.Info(msg, args...)
+		case int(slog.LevelWarn):
+			slog.Warn(msg, args...)
+		case int(slog.LevelError):
+			slog.Error(msg, args...)
+		}
+	}
+
+	c := dx.NewClient(logfunc)
 	if err := c.Dial(ctx.Context, url, func(ms dx.MessageSetup) error { return nil }); err != nil {
 		return fmt.Errorf("dial failed: %w", err)
 	}

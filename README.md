@@ -52,5 +52,5 @@ Ok, cool, hopefully you're connected to your account. Now we can get some symbol
 And to get the options chain for a symbol, you can do the following (note that we're using `jq` to manipulate the rich output and get to the "relevant" data under `data.items`). Anyway, here's an example command:
 
 ```
-./cli data option-chain -s SPY | jq '.data.items | map({"streamer-symbol": .["streamer-symbol"], DTE: .["days-to-expiration"]})'
+./cli data option-chain -s SPY | jq '.data.items | .[0:500] | map({"streamer-symbol": .["streamer-symbol"], DTE: .["days-to-expiration"]})'
 ```

@@ -67,3 +67,12 @@ type FeedTimeSeriesSubscription struct {
 func (m FeedTimeSeriesSubscription) JSON() ([]byte, error) {
 	return json.Marshal(m)
 }
+
+type FeedCompactQuote struct {
+	AskPrice    float64 `json:"askPrice"`
+	AskSize     float64 `json:"askSize"`
+	BidPrice    float64 `json:"bidPrice"`
+	BidSize     float64 `json:"bidSize"`
+	EventSymbol string  `json:"eventSymbol"`
+	EventType   string  `json:"eventType"` // always "quote"
+}

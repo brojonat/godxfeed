@@ -17,11 +17,7 @@ func new_session_token(ctx *cli.Context) error {
 		return err
 	}
 	return writeCLIResponse(
-		tts.NewSessionToken(
-			ctx.String("tastyworks-endpoint"),
-			ctx.String("username"),
-			ctx.String("password"),
-		))
+		tts.NewSessionToken(ctx.String("username"), ctx.String("password")))
 }
 
 func dxlink_api_token(ctx *cli.Context) error {
@@ -30,9 +26,5 @@ func dxlink_api_token(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return writeCLIResponse(
-		tts.NewStreamerToken(
-			ctx.String("tastyworks-endpoint"),
-			ctx.String("session-token"),
-		))
+	return writeCLIResponse(tts.NewStreamerToken())
 }

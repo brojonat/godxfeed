@@ -4,21 +4,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/brojonat/godxfeed/dxclient"
 	dx "github.com/brojonat/godxfeed/dxclient"
 	"github.com/brojonat/godxfeed/service/api"
 	"github.com/brojonat/godxfeed/service/db/dbgen"
 	bwebsocket "github.com/brojonat/websocket"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/client"
 )
@@ -49,46 +52,122 @@ func getSymbologyURL(endpoint, symType, sym string) (string, error) {
 }
 
 type Service interface {
+	// Log logs a message.
 	Log(level int, m string, args ...any)
+	// TemporalClient returns a Temporal client. N.B.: under certain
+	// circumstances, callers may choose to initialize the service without a
+	// Temporal client, in which case this will return nil.
 	TemporalClient() client.Client
+	// DBPool returns a *pgxpool.Pool. This is useful if you need to perform a
+	// query that needs a transaction. N.B.: under certain circumstances,
+	// callers may choose to initialize the service without a DB connection, in
+	// which case this will return nil.
 	DBPool() *pgxpool.Pool
+	// DBQ returns a *dbgen.Queries. This is the main interface to the DB. N.B.:
+	// under certain circumstances, callers may choose to initialize the service
+	// without a DB connection, in which case this will return nil.
 	DBQ() *dbgen.Queries
 
+	// WSClientRegister registers a websocket connection (e.g., a browser).
 	WSClientRegister(ctx context.Context, cf context.CancelFunc, c bwebsocket.Client)
+	// WSClientUnregister unregisters a websocket connection.
 	WSClientUnregister(c bwebsocket.Client)
-	WSClientHandleMessage(twEndpoint string, twToken string, dxEndpoint string, dxToken string) []bwebsocket.MessageHandler
+	// WSClientHandleMessage returns a message handler. This is a function that
+	// accept a bwebsocket.Client and a []byte that represents a message from
+	// the client. This handler will be invoked on every message received from
+	// the client. IMPORTANT: this implementation DEFINES the API for websocket
+	// clients to interact with our service! The service is free to implement
+	// any functionality it wants. The minimal recommended implementation is a
+	// function that listens for a "subscribe" message from the client and
+	// registers the client on the service as a listener. Additionally, the
+	// implementation should also listen for an "unsubscribe" message from the
+	// client and then deregister the client from the service. Do whatever you
+	// want, but you should keep this as simple as possible!
+	WSClientHandleMessage() bwebsocket.MessageHandler
 
-	NewSessionToken(endpoint string, username string, password string) (*api.Response, error)
-	TestSessionToken(endpoint string, sessionToken string) (*api.Response, error)
-	NewStreamerToken(endpoint string, sessionToken string) (*api.Response, error)
-	GetSymbolData(endpoint string, sessionToken string, symbol string, symbolType string) (*api.Response, error)
-	GetOptionChain(endpoint string, sessionToken string, symbol string, nested bool, compact bool) (*api.Response, error)
+	// NewSessionToken returns a new session token from the TastyTrade API.
+	NewSessionToken(username string, password string) (*api.Response, error)
+	// Tests the provided session token against the TastyTrade API.
+	TestSessionToken(sessionToken string) (*api.Response, error)
+	// Returns a token that can be used with the dxfeed streaming API.
+	NewStreamerToken() (*api.Response, error)
+	// Returns all the metadata for the symbol from the TastyTrade API.
+	GetSymbolData(symbol string, symbolType string) (*api.Response, error)
+	// Returns the option chain for the symbol from the TastyTrade API.
+	GetOptionChain(symbol string) (*api.Response, error)
+	// Returns the metadata for the provided equity symbol AND all related
+	// option symbols
+	GetRelatedSymbols(symbol string) ([]string, error)
 
-	GetRelatedSymbols(endpoint string, sessionToken string, symbol string) ([]string, error)
+	// Returns a channel that emits updates for the supplied symbols. This
+	// should only be invoked ONCE per service instance since it generally
+	// requires a new websocket connection to the dxfeed streaming API.
+	StreamSymbols(ctx context.Context, syms []string) (<-chan []byte, error)
+	// This handles all messages received from the dxfeed streaming API.
+	// Implementations likely do things like discard/ignore control messages,
+	// filter for FEED_DATA messages, and/or transform messages into richer data
+	// structures before serializing and returning the result. Note that the
+	// return type is []byte to accommodate any conceivable implementation.
+	HandleDXFeedMessage(message dx.Message) ([]byte, error)
+
+	// Subscribes the client to receive updates for the supplied symbol
 	SubscribeClient(c bwebsocket.Client, cf context.CancelFunc, symbol string) error
+	// Unsubscribes the client from updates for the supplied symbol
 	UnsubscribeClient(c bwebsocket.Client, symbol string) error
-	StreamSymbols(ctx context.Context, endpoint string, token string, syms []string) (<-chan []byte, error)
-	PrepareMessageForClient(symbols []string, message dx.Message, validators ...func([]string, dx.Message) error) ([]byte, error)
 }
 
 type service struct {
-	logger    *slog.Logger
-	tc        client.Client
-	dbpool    *pgxpool.Pool
-	dbqueries *dbgen.Queries
-	subLock   *sync.RWMutex
-	subs      map[bwebsocket.Client]map[string]context.CancelFunc
+	twEndpoint    string
+	sessionToken  string
+	dxEndpoint    string
+	streamerToken string
+	logger        *slog.Logger
+	tc            client.Client
+	dbpool        *pgxpool.Pool
+	dbqueries     *dbgen.Queries
+	subLock       *sync.RWMutex
+	subs          map[bwebsocket.Client]map[string]context.CancelFunc
 }
 
-func NewService(l *slog.Logger, tc client.Client, p *pgxpool.Pool, q *dbgen.Queries) Service {
-	return &service{
-		logger:    l,
-		tc:        tc,
-		dbpool:    p,
-		dbqueries: q,
-		subLock:   &sync.RWMutex{},
-		subs:      make(map[bwebsocket.Client]map[string]context.CancelFunc),
+func NewService(
+	twEndpoint string,
+	sessionToken string,
+	dxEndpoint string,
+	streamerToken string,
+	l *slog.Logger,
+	tc client.Client,
+	p *pgxpool.Pool,
+	q *dbgen.Queries,
+) Service {
+	s := &service{
+		twEndpoint:    twEndpoint,
+		sessionToken:  sessionToken,
+		dxEndpoint:    dxEndpoint,
+		streamerToken: streamerToken,
+		logger:        l,
+		tc:            tc,
+		dbpool:        p,
+		dbqueries:     q,
+		subLock:       &sync.RWMutex{},
+		subs:          make(map[bwebsocket.Client]map[string]context.CancelFunc),
 	}
+	return s
+}
+
+func (s *service) recordSymbolData(fds []dxclient.FeedCompactQuote) (int64, error) {
+	ts := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	data := []dbgen.InsertSymbolDataParams{}
+	for _, fd := range fds {
+		data = append(data, dbgen.InsertSymbolDataParams{
+			Symbol:   fd.EventSymbol,
+			Ts:       ts,
+			BidPrice: fd.BidPrice,
+			BidSize:  fd.BidSize,
+			AskPrice: fd.AskPrice,
+			AskSize:  fd.AskSize,
+		})
+	}
+	return s.DBQ().InsertSymbolData(context.Background(), data)
 }
 
 func (s *service) Log(level int, msg string, args ...any) {
@@ -118,8 +197,8 @@ func (s *service) DBQ() *dbgen.Queries {
 
 func (s *service) WSClientRegister(ctx context.Context, cf context.CancelFunc, c bwebsocket.Client) {}
 func (s *service) WSClientUnregister(c bwebsocket.Client)                                           {}
-func (s *service) WSClientHandleMessage(twEndpoint, twToken, dxEndpoint, dxToken string) []bwebsocket.MessageHandler {
-	return []bwebsocket.MessageHandler{
+func (s *service) WSClientHandleMessage() bwebsocket.MessageHandler {
+	return bwebsocket.MessageHandler(
 		func(c bwebsocket.Client, b []byte) {
 			s.Log(int(slog.LevelInfo), fmt.Sprintf("got client message: %s", b))
 
@@ -145,7 +224,14 @@ func (s *service) WSClientHandleMessage(twEndpoint, twToken, dxEndpoint, dxToken
 				ctx := context.Background()
 				go func() {
 					ctx, cf := context.WithCancel(ctx)
-					ch, err := s.StreamSymbols(ctx, dxEndpoint, dxToken, []string{sym})
+					// FIXME: we must not be do this in practice since it'll
+					// result in a new websocket connection to the dxfeed for
+					// every client connection! Instead, the server should start
+					// streaming an ensemble of symbols on boot that this client
+					// can then tap into. Here we can do something like
+					// subscribe to postgres notifications or something. This is
+					// temporarily useful for development purposes though.
+					ch, err := s.StreamSymbols(ctx, []string{sym})
 					if err != nil {
 						s.Log(int(slog.LevelError), fmt.Sprintf("unable to stream symbols: %v", err))
 						cf()
@@ -183,11 +269,11 @@ func (s *service) WSClientHandleMessage(twEndpoint, twToken, dxEndpoint, dxToken
 				s.Log(int(slog.LevelDebug), "unhandled message type", "data", string(b))
 			}
 		},
-	}
+	)
 }
 
-func (s *service) NewSessionToken(endpoint, u, p string) (*api.Response, error) {
-	url := fmt.Sprintf("https://%s/sessions", endpoint)
+func (s *service) NewSessionToken(u, p string) (*api.Response, error) {
+	url := fmt.Sprintf("https://%s/sessions", s.twEndpoint)
 	bdata := struct {
 		Login      string `json:"login"`
 		Password   string `json:"password"`
@@ -234,8 +320,8 @@ func (s *service) NewSessionToken(endpoint, u, p string) (*api.Response, error) 
 	return &response, nil
 }
 
-func (s *service) TestSessionToken(endpoint, sessionToken string) (*api.Response, error) {
-	url := fmt.Sprintf("https://%s/customers/me", endpoint)
+func (s *service) TestSessionToken(sessionToken string) (*api.Response, error) {
+	url := fmt.Sprintf("https://%s/customers/me", s.twEndpoint)
 	r, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
@@ -269,15 +355,15 @@ func (s *service) TestSessionToken(endpoint, sessionToken string) (*api.Response
 	return &response, nil
 }
 
-func (s *service) NewStreamerToken(endpoint, sessionToken string) (*api.Response, error) {
-	url := fmt.Sprintf("https://%s/api-quote-tokens", endpoint)
+func (s *service) NewStreamerToken() (*api.Response, error) {
+	url := fmt.Sprintf("https://%s/api-quote-tokens", s.twEndpoint)
 	r, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
 
 	addDefaultHeaders(r.Header)
-	r.Header.Add("Authorization", sessionToken)
+	r.Header.Add("Authorization", s.sessionToken)
 
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {
@@ -305,10 +391,10 @@ func (s *service) NewStreamerToken(endpoint, sessionToken string) (*api.Response
 	return &response, nil
 }
 
-func (s *service) GetSymbolData(endpoint, sessionToken, symbol, symbolType string) (*api.Response, error) {
+func (s *service) GetSymbolData(symbol, symbolType string) (*api.Response, error) {
 	sym := strings.ToUpper(symbol)
 	symType := strings.ToLower(symbolType)
-	url, err := getSymbologyURL(endpoint, symType, sym)
+	url, err := getSymbologyURL(s.twEndpoint, symType, sym)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", api.ErrorBadRequest{Message: "bad request"}, err)
 	}
@@ -317,7 +403,7 @@ func (s *service) GetSymbolData(endpoint, sessionToken, symbol, symbolType strin
 		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
 	addDefaultHeaders(r.Header)
-	r.Header.Add("Authorization", sessionToken)
+	r.Header.Add("Authorization", s.sessionToken)
 
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {
@@ -338,20 +424,15 @@ func (s *service) GetSymbolData(endpoint, sessionToken, symbol, symbolType strin
 	return &response, nil
 }
 
-func (s *service) GetOptionChain(endpoint, sessionToken, symbol string, nested, compact bool) (*api.Response, error) {
+func (s *service) GetOptionChain(symbol string) (*api.Response, error) {
 	sym := strings.ToUpper(symbol)
-	url := fmt.Sprintf("https://%s/option-chains/%s", endpoint, sym)
-	if nested {
-		url += "/nested"
-	} else if compact {
-		url += "/compact"
-	}
+	url := fmt.Sprintf("https://%s/option-chains/%s/compact", s.twEndpoint, sym)
 	r, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
 	addDefaultHeaders(r.Header)
-	r.Header.Add("Authorization", sessionToken)
+	r.Header.Add("Authorization", s.sessionToken)
 
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {
@@ -374,14 +455,9 @@ func (s *service) GetOptionChain(endpoint, sessionToken, symbol string, nested, 
 
 // GetRelatedSymbols returns the equity and options symbols for the supplied equity symbol
 // sorted by days to expiry.
-func (s *service) GetRelatedSymbols(endpoint, token, symbol string) ([]string, error) {
+func (s *service) GetRelatedSymbols(symbol string) ([]string, error) {
 	// get the equity streamer symbols
-	twr, err := s.GetSymbolData(
-		endpoint,
-		token,
-		symbol,
-		api.SYMBOL_TYPE_EQUITIES,
-	)
+	twr, err := s.GetSymbolData(symbol, api.SYMBOL_TYPE_EQUITIES)
 	if err != nil {
 		return []string{}, fmt.Errorf("could not get equity symbol data: %w", err)
 	}
@@ -392,12 +468,7 @@ func (s *service) GetRelatedSymbols(endpoint, token, symbol string) ([]string, e
 	syms := []string{eqData.StreamerSymbol}
 
 	// get the option streamer symbols
-	twr, err = s.GetSymbolData(
-		endpoint,
-		token,
-		symbol,
-		api.SYMBOL_TYPE_OPTIONS,
-	)
+	twr, err = s.GetSymbolData(symbol, api.SYMBOL_TYPE_OPTIONS)
 	if err != nil {
 		return []string{}, fmt.Errorf("could not get option symbology data: %w", err)
 	}
@@ -462,22 +533,31 @@ func (s *service) UnsubscribeClient(c bwebsocket.Client, symbol string) error {
 // an error. Any messages that the DXLink server sends are sent down the
 // returned channel. Consumers can range over the channel; it will be closed
 // when done reading data. NOTE: every call to StreamSymbols creates a new
-// client that connects to the DXLink endpoint; this should only be called once
-// per subscriber.
-func (s *service) StreamSymbols(ctx context.Context, endpoint, token string, syms []string) (<-chan []byte, error) {
-	url := fmt.Sprintf("wss://%s", endpoint)
+// client that connects to the DXLink endpoint; this should only be called
+// ONCE PER SERVICE INSTANCE. The service can write the data to a database
+// and then we can serve the aggregate data to any number of clients.
+func (s *service) StreamSymbols(
+	ctx context.Context,
+	syms []string,
+) (<-chan []byte, error) {
 	out := make(chan []byte)
-	c := dx.NewClient()
+	// Pass the service logger to the client for logging. This may be a
+	// boneheaded move but I'm testing it out.
+	logfunc := func(lvl int, msg string, args ...any) {
+		s.Log(lvl, msg, args)
+	}
+	c := dx.NewClient(logfunc)
 	noop := func(ms dx.MessageSetup) error { return nil }
-	if err := c.Dial(ctx, url, noop); err != nil {
+	if err := c.Dial(ctx, s.dxEndpoint, noop); err != nil {
 		return nil, fmt.Errorf("%w: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
-	if err := c.Authenticate(token); err != nil {
+	if err := c.Authenticate(s.streamerToken); err != nil {
 		return nil, fmt.Errorf("%w: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
-
 	c.Subscribe(syms)
 
+	// In a separate goroutine, range over the client channel and send all the
+	// relevant incoming message to the caller on the returned channel.
 	data, _ := c.C()
 	go func() {
 		for {
@@ -486,85 +566,81 @@ func (s *service) StreamSymbols(ctx context.Context, endpoint, token string, sym
 				close(out)
 				return
 			case msg := <-data:
-				b, err := s.PrepareMessageForClient(syms, msg)
-				if err != nil {
-					s.Log(int(slog.LevelInfo), err.Error())
-					continue
+				b, err := s.HandleDXFeedMessage(msg)
+				switch err {
+				case nil:
+					// success; send the message and continue on
+					out <- b
+				case errNotFeedData:
+					// message was not a FEED_DATA message; may have been some
+					// sort of control message or something, just no-op
+				default:
+					// we encountered some unexpected error; log it and continue
+					s.Log(
+						int(slog.LevelInfo),
+						"unexpected error handling message from dxfeed",
+						"err", err.Error(),
+						"msg", msg,
+					)
 				}
-				out <- b
 			}
 		}
 	}()
 	return out, nil
 }
 
-// PrepareMessageForClient accepts a list of symbols that the client has subscribed to
-// and a message from the corresponding subscription. It modifies the supplied message
-// and returns the result. The canonical use case is adding theoretical prices to
-// option price quotes, though other implementations may perform different modifications.
-// Similarly, this function may return an error if the message should not be forwarded
-// to the subscription (such as when a KEEPALIVE message is received).
-func (s *service) PrepareMessageForClient(syms []string, m dx.Message, validators ...func([]string, dx.Message) error) ([]byte, error) {
-	// FIXME: turn these into validators we can inject
-	b, err := m.JSON()
-	if err != nil {
-		s.Log(int(slog.LevelError), fmt.Sprintf("could not serialize message, %v", err))
-		return nil, err
-	}
-	var mb dx.MessageBase
-	if err := json.Unmarshal(b, &mb); err != nil {
-		s.Log(int(slog.LevelError), fmt.Sprintf("could not parse message: %v", err))
-		return nil, err
-	}
+var errNotFeedData = errors.New("not a FEED_DATA message")
 
-	// we only want to send FEED_DATA messages that pertain to symbols in the subscription list
-	if mb.Type != dx.MESSAGE_TYPE_FEED_DATA {
-		return nil, fmt.Errorf("not a FEED_DATA message")
-	}
+// Accepts a message from the dxfeed. It modifies the supplied message,
+// potentially adding useful information such as theoretical prices, and returns
+// the resulting bytes. Similarly, this function may return an error if the
+// message should not be forwarded to subscribed clients (such as when the
+// message is merely a KEEPALIVE control message).
+func (s *service) HandleDXFeedMessage(m dx.Message) ([]byte, error) {
 	msg, ok := m.(dx.MessageFeedData)
 	if !ok {
-		return nil, fmt.Errorf("could not assert FEED_DATA message")
-	}
-	// data is a list of structs
-	type original struct {
-		AskPrice    float64 `json:"askPrice"`
-		AskSize     float64 `json:"askSize"`
-		BidPrice    float64 `json:"bidPrice"`
-		BidSize     float64 `json:"bidSize"`
-		EventSymbol string  `json:"eventSymbol"`
-		EventType   string  `json:"eventType"`
-	}
-	var data []original
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		return nil, fmt.Errorf("could not deserialize FEED_DATA data: %s", msg.Data)
+		return nil, errNotFeedData
 	}
 
-	// FIXME: unscope this?
-	type updated struct {
-		AskPrice     float64 `json:"askPrice"`
-		AskPriceTheo float64 `json:"askPriceTheo"`
-		AskSize      float64 `json:"askSize"`
-		BidPrice     float64 `json:"bidPrice"`
-		BidPriceTheo float64 `json:"bidPriceTheo"`
-		BidSize      float64 `json:"bidSize"`
-		EventSymbol  string  `json:"eventSymbol"`
-		EventType    string  `json:"eventType"`
+	// NOTE: some numeric fields coming from dxfeed are set to "NaN", which will
+	// result in an error if we try to parse them. Fortunately, we can simply
+	// replace those bytes with a suitable zero value (i.e., 0).
+	bytes.ReplaceAll(msg.Data, []byte(`"NaN"`), []byte(`0.0`))
+
+	var data []dx.FeedCompactQuote
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		return nil, fmt.Errorf("could not deserialize FEED_DATA data (%w): %s", err, msg.Data)
 	}
-	nm := []updated{}
-	for _, d := range data {
-		// not subscribed to this symbol
-		if !slices.Contains(syms, d.EventSymbol) {
-			s.Log(int(slog.LevelError), "received data the client didn't subscribe to")
-			return nil, fmt.Errorf("symbol not subscribed to")
-		}
-		// FIXME: in the future once we're receiving options data, we'll need to filter
-		// here to options symbols
-		nm = append(nm, updated{AskPrice: d.AskPrice, AskPriceTheo: 123, AskSize: d.AskSize, BidPrice: d.BidPrice, BidPriceTheo: 789, BidSize: d.BidSize, EventSymbol: d.EventSymbol, EventType: d.EventType})
-	}
-	b, err = json.Marshal(nm)
+
+	count, err := s.recordSymbolData(data)
 	if err != nil {
-		s.Log(int(slog.LevelError), fmt.Sprintf("could not serialize updated data: %v", err))
+		s.Log(
+			int(slog.LevelError),
+			"error inserting feed data into db",
+			"error", err.Error(),
+			"count", count,
+		)
+	}
+
+	res := []api.FeedCompactQuote{}
+	for _, d := range data {
+		res = append(res, api.FeedCompactQuote{
+			FeedCompactQuote: dx.FeedCompactQuote{
+				AskPrice:    d.AskPrice,
+				AskSize:     d.AskSize,
+				BidPrice:    d.BidPrice,
+				BidSize:     d.BidSize,
+				EventSymbol: d.EventSymbol,
+				EventType:   d.EventType,
+			},
+			AskPriceTheo: 123,
+			BidPriceTheo: 789,
+		})
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
 		return nil, fmt.Errorf("could not serialize updated data")
 	}
+
 	return b, nil
 }

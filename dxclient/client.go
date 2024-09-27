@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -43,23 +42,19 @@ type Client interface {
 	Send(Message) error
 	// Returns a channel of []byte consumers can listen on for all messages
 	C() (<-chan Message, string)
-	// SetLogger allows consumers to inject their own logging dependencies
-	SetLogger(any) error
 	// Log allows implementors to use their own logging dependencies
 	Log(int, string, ...any)
 	// Block until done
 	Wait()
 }
 
-func NewClient() Client {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	logger = logger.With("service", "client")
+func NewClient(lf func(int, string, ...interface{})) Client {
 	return &client{
 		lock:     &sync.RWMutex{},
 		wg:       &sync.WaitGroup{},
 		egress:   make(chan egressPayload),
 		handlers: make(map[string]func(Message)),
-		logger:   logger,
+		logfunc:  lf,
 	}
 }
 
@@ -70,7 +65,7 @@ type client struct {
 	conn         *websocket.Conn
 	handlers     map[string]func(Message)
 	egress       chan egressPayload
-	logger       *slog.Logger
+	logfunc      func(int, string, ...interface{})
 }
 
 // Dial sets up the websocket connection and performs the initial setup/auth
@@ -286,6 +281,7 @@ func (c *client) readForever(ctx context.Context) {
 			_, b, err := c.conn.ReadMessage()
 			if err != nil {
 				errCancel <- err
+				// FIXME: return? probably not
 			}
 			c.Log(int(slog.LevelDebug), "read message", "data", string(b))
 			// parse the message into MessageBase and extract the type
@@ -464,26 +460,8 @@ func (c *client) Send(m Message) error {
 	return nil
 }
 
-func (c *client) SetLogger(v any) error {
-	l, ok := v.(*slog.Logger)
-	if !ok {
-		return fmt.Errorf("bad logger value supplied")
-	}
-	c.logger = l
-	return nil
-}
-
 func (c *client) Log(level int, s string, args ...any) {
-	switch level {
-	case int(slog.LevelDebug):
-		c.logger.Debug(s, args...)
-	case int(slog.LevelInfo):
-		c.logger.Info(s, args...)
-	case int(slog.LevelWarn):
-		c.logger.Warn(s, args...)
-	case int(slog.LevelError):
-		c.logger.Error(s, args...)
-	}
+	c.logfunc(level, s, args...)
 }
 
 // Wait blocks until the client is done reading/writing

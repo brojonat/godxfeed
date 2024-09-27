@@ -114,7 +114,7 @@ func RunHTTPServer(
 	))
 	// returns TastyTrade session token; requires Bearer token
 	mux.Handle("GET /session-token", stools.AdaptHandler(
-		handleNewSessionToken(tts, twEndpoint),
+		handleNewSessionToken(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
 			bearerAuthorizerCtxSetToken(getSecretKey),
@@ -122,7 +122,7 @@ func RunHTTPServer(
 	))
 	// returns DXFeed streamer token; requires Bearer token
 	mux.Handle("GET /test-session-token", stools.AdaptHandler(
-		handleTestSessionToken(tts, twEndpoint),
+		handleTestSessionToken(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
 			bearerAuthorizerCtxSetToken(getSecretKey),
@@ -130,7 +130,7 @@ func RunHTTPServer(
 	))
 
 	mux.Handle("GET /streamer-token", stools.AdaptHandler(
-		handleNewStreamerToken(tts, twEndpoint),
+		handleNewStreamerToken(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
 			bearerAuthorizerCtxSetToken(getSecretKey),
@@ -139,21 +139,21 @@ func RunHTTPServer(
 
 	// data handlers
 	mux.Handle("GET /symbol", stools.AdaptHandler(
-		handleGetSymbolData(tts, twEndpoint),
+		handleGetSymbolData(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
 			bearerAuthorizerCtxSetToken(getSecretKey),
 		),
 	))
 	mux.Handle("GET /option-chain", stools.AdaptHandler(
-		handleGetOptionChain(tts, twEndpoint),
+		handleGetOptionChain(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
 			bearerAuthorizerCtxSetToken(getSecretKey),
 		),
 	))
 	mux.Handle("GET /ws", stools.AdaptHandler(
-		handleServeWS(tts, twEndpoint, twToken, dxEndpoint, dxToken),
+		handleServeWS(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
 			bearerAuthorizerCtxSetToken(getSecretKey),
@@ -164,7 +164,7 @@ func RunHTTPServer(
 	return http.ListenAndServe(addr, mux)
 }
 
-func handleServeWS(tts service.Service, twEndpoint, twToken, dxEndpoint, dxToken string) http.HandlerFunc {
+func handleServeWS(tts service.Service) http.HandlerFunc {
 	return bwebsocket.ServeWS(
 		upgrader,
 		bwebsocket.DefaultSetupConn,
@@ -172,7 +172,7 @@ func handleServeWS(tts service.Service, twEndpoint, twToken, dxEndpoint, dxToken
 		tts.WSClientRegister,
 		tts.WSClientUnregister,
 		45*time.Second,
-		tts.WSClientHandleMessage(twEndpoint, twToken, dxEndpoint, dxToken),
+		[]bwebsocket.MessageHandler{tts.WSClientHandleMessage()},
 	)
 
 }
