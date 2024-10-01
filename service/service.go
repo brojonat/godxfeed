@@ -167,6 +167,9 @@ func (s *service) recordSymbolData(fds []dxclient.FeedCompactQuote) (int64, erro
 			AskSize:  fd.AskSize,
 		})
 	}
+	if len(data) == 0 {
+		return 0, nil
+	}
 	return s.DBQ().InsertSymbolData(context.Background(), data)
 }
 
@@ -548,7 +551,7 @@ func (s *service) StreamSymbols(
 	}
 	c := dx.NewClient(logfunc)
 	noop := func(ms dx.MessageSetup) error { return nil }
-	if err := c.Dial(ctx, s.dxEndpoint, noop); err != nil {
+	if err := c.Dial(ctx, "wss://"+s.dxEndpoint, noop); err != nil {
 		return nil, fmt.Errorf("%w: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
 	if err := c.Authenticate(s.streamerToken); err != nil {
@@ -605,7 +608,7 @@ func (s *service) HandleDXFeedMessage(m dx.Message) ([]byte, error) {
 	// NOTE: some numeric fields coming from dxfeed are set to "NaN", which will
 	// result in an error if we try to parse them. Fortunately, we can simply
 	// replace those bytes with a suitable zero value (i.e., 0).
-	bytes.ReplaceAll(msg.Data, []byte(`"NaN"`), []byte(`0.0`))
+	msg.Data = bytes.ReplaceAll(msg.Data, []byte(`"NaN"`), []byte(`0.0`))
 
 	var data []dx.FeedCompactQuote
 	if err := json.Unmarshal(msg.Data, &data); err != nil {

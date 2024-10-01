@@ -33,6 +33,9 @@ func setupService(ctx *cli.Context) (service.Service, error) {
 	}
 
 	// temporal
+	if ctx.String("temporal-host") == "" {
+		return nil, fmt.Errorf("must set temporal connection flag")
+	}
 	tc, err := client.Dial(client.Options{
 		Logger:   l,
 		HostPort: ctx.String("temporal-host"),
@@ -42,6 +45,9 @@ func setupService(ctx *cli.Context) (service.Service, error) {
 	}
 
 	// db
+	if ctx.String("database") == "" {
+		return nil, fmt.Errorf("must set database connection flag")
+	}
 	p, err := stools.GetConnPool(
 		ctx.Context, ctx.String("database"),
 		func(ctx context.Context, c *pgx.Conn) error { return nil },
