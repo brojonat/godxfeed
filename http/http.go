@@ -159,6 +159,9 @@ func RunHTTPServer(
 			bearerAuthorizerCtxSetToken(getSecretKey),
 		),
 	))
+
+	// plots!
+
 	addr = ":" + addr
 	tts.Log(int(slog.LevelInfo), fmt.Sprintf("listening on %s", addr))
 	return http.ListenAndServe(addr, mux)

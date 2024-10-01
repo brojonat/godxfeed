@@ -23,12 +23,10 @@ func get_option_chain(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return writeCLIResponse(
-		tts.GetOptionChain(ctx.String("symbol")))
+	return writeCLIResponse(tts.GetOptionChain(ctx.String("symbol")))
 }
 
 func stream_symbol(ctx *cli.Context) error {
-	ctx.Context = context.WithValue(ctx.Context, ctxKeyMinimalSetup, true)
 	tts, err := setupService(ctx)
 	if err != nil {
 		return err

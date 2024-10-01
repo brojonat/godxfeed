@@ -169,15 +169,32 @@ func main() {
 						Usage: "stream the equity symbol and related option symbols",
 						Flags: []cli.Flag{
 							&cli.StringFlag{
+								Name:    "database",
+								Aliases: []string{"db", "d"},
+								Usage:   "Database endpoint",
+								Value:   os.Getenv("DATABASE_URL"),
+							},
+							&cli.StringFlag{
 								Name:    "tastyworks-endpoint",
 								Aliases: []string{"tw"},
 								Value:   "api.tastyworks.com",
 								Usage:   "TWAPI base url",
 							},
 							&cli.StringFlag{
+								Name:    "dxfeed-endpoint",
+								Aliases: []string{"se"},
+								Usage:   "DXLINK streaming endpoint.",
+								Value:   "tasty-openapi-ws.dxfeed.com/realtime",
+							},
+							&cli.StringFlag{
 								Name:  "session-token",
 								Value: os.Getenv("SESSION_TOKEN"),
 								Usage: "TWAPI session token. Expires every 24h. Use `new-session-token` to get a new token.",
+							},
+							&cli.StringFlag{
+								Name:  "streamer-token",
+								Usage: "DXLINK auth token.",
+								Value: os.Getenv("STREAMER_TOKEN"),
 							},
 							&cli.StringFlag{
 								Name:    "symbol",
