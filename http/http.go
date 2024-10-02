@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
@@ -97,6 +98,19 @@ func RunHTTPServer(
 	methods := normalizeCORSParams(ms)
 	origins := normalizeCORSParams(ogs)
 
+	// FIXME: once we're done iterating, shove this back into a embedded FS
+	// ridgelinePlotTemplate = template.Must(template.ParseFS(static, "static/templates/plots/ridgeline.tmpl"))
+	// jsFS, err := fs.Sub(static, "static")
+	// if err != nil {
+	// 	return nil, fmt.Errorf("startup: failed to setup js static file server: %w", err)
+	// }
+	// fsJS := http.FileServer(http.FS(jsFS))
+
+	// note the peculiar pathing because the cli is run from the root directory
+	ridgelinePlotTemplate = template.Must(template.ParseFiles("http/static/templates/plots/ridgeline.tmpl"))
+	fsJS := http.FileServer(http.Dir("http/static"))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", fsJS))
+
 	// smoke test/boot handlers
 	mux.Handle("GET /ping", stools.AdaptHandler(
 		stools.HandlePing(),
@@ -112,6 +126,7 @@ func RunHTTPServer(
 		handleIssueToken(tts),
 		atLeastOneAuth(basicAuthorizerCtxSetEmail(getSecretKey)),
 	))
+
 	// returns TastyTrade session token; requires Bearer token
 	mux.Handle("GET /session-token", stools.AdaptHandler(
 		handleNewSessionToken(tts),
@@ -161,6 +176,14 @@ func RunHTTPServer(
 	))
 
 	// plots!
+	mux.Handle("GET /plots", stools.AdaptHandler(
+		handleGetPlots(tts),
+		atLeastOneAuth(basicAuthorizerCtxSetEmail(getSecretKey)),
+	))
+	mux.Handle("GET /plot-dummy-data", stools.AdaptHandler(
+		handleGetPlotDummyData(tts),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
 
 	addr = ":" + addr
 	tts.Log(int(slog.LevelInfo), fmt.Sprintf("listening on %s", addr))
