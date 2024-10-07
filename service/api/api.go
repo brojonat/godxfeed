@@ -76,6 +76,7 @@ type OptionSymbol struct {
 
 const CLIENT_MESSAGE_TYPE_SUBSCRIBE = "subscribe"
 const CLIENT_MESSAGE_TYPE_UNSUBSCRIBE = "unsubscribe"
+const CLIENT_MESSAGE_TYPE_SUBSCRIBE_TOPIC = "subscribe.topic"
 
 type ClientMessage struct {
 	Type string          `json:"type"`
