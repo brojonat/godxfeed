@@ -17,10 +17,15 @@ import (
 	sapi "github.com/brojonat/godxfeed/service/api"
 	"github.com/brojonat/server-tools/stools"
 	bwebsocket "github.com/brojonat/websocket"
+	"github.com/gorilla/websocket"
 )
 
 // FIXME: origins need updating
-var upgrader = bwebsocket.DefaultUpgrader([]string{"http://localhost:9000", "http://localhost:9000"})
+// var upgrader = bwebsocket.DefaultUpgrader([]string{"http://localhost:9000", "http://localhost:9000"})
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+}
 
 func writeOK(w http.ResponseWriter) {
 	resp := api.DefaultJSONResponse{Message: "ok"}
@@ -82,6 +87,8 @@ func RunHTTPServer(
 
 	// max body size, other parsing params
 	maxBytes := int64(1048576)
+
+	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 
 	// parse and transform the comma separated envs that configure CORS
 	hs := os.Getenv("CORS_HEADERS")
@@ -167,12 +174,13 @@ func RunHTTPServer(
 			bearerAuthorizerCtxSetToken(getSecretKey),
 		),
 	))
+
 	mux.Handle("GET /ws", stools.AdaptHandler(
 		handleServeWS(tts),
-		apiMode(tts, maxBytes, headers, methods, origins),
-		atLeastOneAuth(
-			bearerAuthorizerCtxSetToken(getSecretKey),
-		),
+		// apiMode(tts, maxBytes, headers, methods, origins),
+		// atLeastOneAuth(
+		// 	bearerAuthorizerCtxSetToken(getSecretKey),
+		// ),
 	))
 
 	// plots!

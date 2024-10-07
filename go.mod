@@ -84,4 +84,5 @@ require (
 	github.com/shopspring/decimal v1.3.1
 	go.temporal.io/sdk v1.29.1
 	golang.org/x/net v0.28.0 // indirect
+	gonum.org/v1/gonum v0.15.1
 )

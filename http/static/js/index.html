@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Histogram with D3</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        /* Add some styling for the histogram bars */
+        .bar {
+            fill: rgb(146, 247, 155);
+        }
+        .yaxis {
+            font-size: 14px;
+        }
+        .xaxis {
+            font-size: 14px;
+        }
+        .x-label {
+            font: 20px sans-serif;
+        }
+        .y-label {
+            font: 20px sans-serif;
+        }
+        /* Fill color for the first group */
+        .chart-color1 {
+            fill: #ff6a6a;
+        }
+
+        /* Fill color for the second group */
+        .chart-color2 {
+            fill: #ffef76;
+        }
+        /* Fill color for the third group */
+        .chart-color3 {
+            fill: #9fff38;
+        }
+        /* Fill color for the needle */
+        .needle,
+        .needle-center {
+            fill: #464A4F;
+        }
+        .gauge-text {
+            font: 20px sans-serif;
+            fill: #464A4F;
+        }
+    </style>
+</head>
+<body>
+    <svg width="600" height="400"></svg>
+    <script src="d3-simple-gauge.js"></script>
+    <script src="dynamic_distribution.js"></script>
+</body>
+</html>

@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/client"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
 func addDefaultHeaders(h http.Header) {
@@ -111,7 +112,7 @@ type Service interface {
 	HandleDXFeedMessage(message dx.Message) ([]byte, error)
 
 	// Subscribes the client to receive updates for the supplied symbol
-	SubscribeClient(c bwebsocket.Client, cf context.CancelFunc, symbol string) error
+	SubscribeClient(c bwebsocket.Client, symbol string) error
 	// Unsubscribes the client from updates for the supplied symbol
 	UnsubscribeClient(c bwebsocket.Client, symbol string) error
 }
@@ -199,7 +200,11 @@ func (s *service) DBQ() *dbgen.Queries {
 }
 
 func (s *service) WSClientRegister(ctx context.Context, cf context.CancelFunc, c bwebsocket.Client) {}
-func (s *service) WSClientUnregister(c bwebsocket.Client)                                           {}
+func (s *service) WSClientUnregister(c bwebsocket.Client) {
+	for _, cf := range s.subs[c] {
+		cf()
+	}
+}
 func (s *service) WSClientHandleMessage() bwebsocket.MessageHandler {
 	return bwebsocket.MessageHandler(
 		func(c bwebsocket.Client, b []byte) {
@@ -214,45 +219,17 @@ func (s *service) WSClientHandleMessage() bwebsocket.MessageHandler {
 			switch cm.Type {
 			case api.CLIENT_MESSAGE_TYPE_SUBSCRIBE:
 				var body struct {
-					Symbol string `json:"symbol"`
+					Topic string `json:"topic"`
 				}
 				if err := json.Unmarshal(cm.Body, &body); err != nil {
 					s.Log(int(slog.LevelInfo), "unable to parse client body", "data", string(cm.Body))
 					return
 				}
-				sym := strings.ToUpper(body.Symbol)
-
-				// Run a goroutine for each symbol the client subscribes to. When the
-				// client unsubscribes from this symbol, the goroutine will be cancelled.
-				ctx := context.Background()
-				go func() {
-					ctx, cf := context.WithCancel(ctx)
-					// FIXME: we must not be do this in practice since it'll
-					// result in a new websocket connection to the dxfeed for
-					// every client connection! Instead, the server should start
-					// streaming an ensemble of symbols on boot that this client
-					// can then tap into. Here we can do something like
-					// subscribe to postgres notifications or something. This is
-					// temporarily useful for development purposes though.
-					ch, err := s.StreamSymbols(ctx, []string{sym})
-					if err != nil {
-						s.Log(int(slog.LevelError), fmt.Sprintf("unable to stream symbols: %v", err))
-						cf()
-						return
-					}
-					if err := s.SubscribeClient(c, cf, sym); err != nil {
-						s.Log(int(slog.LevelError), fmt.Sprintf("unable to subscribe client: %v", err))
-						return
-					}
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case b := <-ch:
-							c.Write(b)
-						}
-					}
-				}()
+				topic := strings.ToUpper(body.Topic)
+				if err := s.SubscribeClient(c, topic); err != nil {
+					s.Log(int(slog.LevelError), "unable to subscribe client", "error", err.Error(), "data", string(cm.Body))
+					return
+				}
 
 			case api.CLIENT_MESSAGE_TYPE_UNSUBSCRIBE:
 				s.Log(int(slog.LevelInfo), "got unsubscribe message", "data", string(cm.Body))
@@ -268,6 +245,7 @@ func (s *service) WSClientHandleMessage() bwebsocket.MessageHandler {
 					s.Log(int(slog.LevelError), fmt.Sprintf("unable to unsubscribe client: %v", err))
 					return
 				}
+
 			default:
 				s.Log(int(slog.LevelDebug), "unhandled message type", "data", string(b))
 			}
@@ -355,6 +333,9 @@ func (s *service) TestSessionToken(sessionToken string) (*api.Response, error) {
 	default:
 		return nil, fmt.Errorf("%w: unexpected response: %s\n%s", api.ErrorInternal{Message: "internal error"}, res.Status, b)
 	}
+	if response.Error.Code != "" {
+		return nil, fmt.Errorf("tastytrade error for session token query: %s", response.Error.Message)
+	}
 	return &response, nil
 }
 
@@ -391,6 +372,9 @@ func (s *service) NewStreamerToken() (*api.Response, error) {
 	default:
 		return nil, fmt.Errorf("%w: unexpected response: %s\n%s", api.ErrorInternal{Message: "internal error"}, res.Status, b)
 	}
+	if response.Error.Code != "" {
+		return nil, fmt.Errorf("tastytrade error for streamer token query: %s", response.Error.Message)
+	}
 	return &response, nil
 }
 
@@ -413,16 +397,16 @@ func (s *service) GetSymbolData(symbol, symbolType string) (*api.Response, error
 		return nil, fmt.Errorf("%w: could not do request: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
 	defer res.Body.Close()
-
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, fmt.Errorf("%w: could not read response body: %w", api.ErrorInternal{Message: "internal error"}, err)
-
 	}
-
 	var response api.Response
 	if err := json.Unmarshal(b, &response); err != nil {
 		return nil, fmt.Errorf("%w: could not parse response body: %w", api.ErrorInternal{Message: "internal error"}, err)
+	}
+	if response.Error.Code != "" {
+		return nil, fmt.Errorf("tastytrade error for symbology query: %s", response.Error.Message)
 	}
 	return &response, nil
 }
@@ -452,6 +436,9 @@ func (s *service) GetOptionChain(symbol string) (*api.Response, error) {
 	var response api.Response
 	if err := json.Unmarshal(b, &response); err != nil {
 		return nil, fmt.Errorf("%w: could not parse response body: %w", api.ErrorInternal{Message: "internal error"}, err)
+	}
+	if response.Error.Code != "" {
+		return nil, fmt.Errorf("tastytrade error for options-chain query: %s", response.Error.Message)
 	}
 	return &response, nil
 }
@@ -504,7 +491,48 @@ func (s *service) GetRelatedSymbols(symbol string) ([]string, error) {
 	return syms, nil
 }
 
-func (s *service) SubscribeClient(c bwebsocket.Client, cf context.CancelFunc, symbol string) error {
+func (s *service) SubscribeClient(c bwebsocket.Client, topic string) error {
+	// Run a goroutine for each symbol the client subscribes to. When the
+	// client unsubscribes from this symbol, the goroutine will be cancelled.
+	ctx := context.Background()
+	go func() {
+		ctx, cf := context.WithCancel(ctx)
+		defer cf()
+		ch, err := s.getTopicChannel(ctx, topic)
+		if err != nil {
+			s.Log(int(slog.LevelError), fmt.Sprintf("unable to get topic channel: %v", err))
+			return
+		}
+		if err := s.storeClientCF(c, cf, topic); err != nil {
+			s.Log(int(slog.LevelError), fmt.Sprintf("unable to subscribe client: %v", err))
+			return
+		}
+
+		// send all the data available up to present
+		// for _, r := range rows {
+		// 		b, err := json.Marshal(r)
+		//  	if err != nil {
+		//  		s.Log(int(slog.LevelError), "unable to serialize row")
+		//  		continue
+		//  	}
+		//  	c.Write(b)
+		// }
+
+		// now send periodic updates as they come in
+		for {
+			select {
+			case <-ctx.Done():
+				s.Log(int(slog.LevelInfo), "client subscription context done; shutting down write loop")
+				return
+			case b := <-ch:
+				c.Write(b)
+			}
+		}
+	}()
+	return nil
+}
+
+func (s *service) storeClientCF(c bwebsocket.Client, cf context.CancelFunc, symbol string) error {
 	s.subLock.Lock()
 	defer s.subLock.Unlock()
 	_, ok := s.subs[c]
@@ -529,6 +557,47 @@ func (s *service) UnsubscribeClient(c bwebsocket.Client, symbol string) error {
 	cf()
 	delete(s.subs[c], symbol)
 	return nil
+}
+
+func (s *service) getTopicChannel(ctx context.Context, topic string) (chan []byte, error) {
+	lrng := distuv.LogNormal{
+		Mu:    1,
+		Sigma: 1,
+		Src:   nil,
+	}
+
+	switch topic {
+	case "TOPIC":
+		ch := make(chan []byte, 1)
+		go func() {
+			t := time.NewTicker(100 * time.Millisecond)
+			for {
+				select {
+				case <-ctx.Done():
+					s.Log(int(slog.LevelInfo), "shutting down client subscription to TOPIC")
+					return
+				case <-t.C:
+					payload := struct {
+						Symbol string    `json:"symbol"`
+						Value  float64   `json:"value"`
+						TS     time.Time `json:"ts"`
+					}{
+						Symbol: "SPY",
+						Value:  lrng.Rand(),
+						TS:     time.Now(),
+					}
+					b, err := json.Marshal(payload)
+					if err != nil {
+						s.Log(int(slog.LevelError), "error serializing payload for random topic: %s", err)
+					}
+					ch <- b
+				}
+			}
+		}()
+		return ch, nil
+	default:
+		return nil, fmt.Errorf("unrecognized topic: %s", topic)
+	}
 }
 
 // StreamSymbols connects to the DXLink websocket endpoint, authenticates, and

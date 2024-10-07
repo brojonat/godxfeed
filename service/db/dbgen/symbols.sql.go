@@ -21,15 +21,15 @@ SELECT
     s.ask_size::REAL AS "ask_size"
 FROM symbol_bid_ask AS s
 WHERE
-    s.symbol = ANY($1::VARCHAR[]) AND
+    s.symbol SIMILAR TO $1 AND
     s.ts >= $2 AND
     s.ts <= $3
 `
 
 type GetSymbolDataRawParams struct {
-	Symbols []string           `json:"symbols"`
-	TsStart pgtype.Timestamptz `json:"ts_start"`
-	TsEnd   pgtype.Timestamptz `json:"ts_end"`
+	Symregexp string             `json:"symregexp"`
+	TsStart   pgtype.Timestamptz `json:"ts_start"`
+	TsEnd     pgtype.Timestamptz `json:"ts_end"`
 }
 
 type GetSymbolDataRawRow struct {
@@ -42,7 +42,7 @@ type GetSymbolDataRawRow struct {
 }
 
 func (q *Queries) GetSymbolDataRaw(ctx context.Context, arg GetSymbolDataRawParams) ([]GetSymbolDataRawRow, error) {
-	rows, err := q.db.Query(ctx, getSymbolDataRaw, arg.Symbols, arg.TsStart, arg.TsEnd)
+	rows, err := q.db.Query(ctx, getSymbolDataRaw, arg.Symregexp, arg.TsStart, arg.TsEnd)
 	if err != nil {
 		return nil, err
 	}

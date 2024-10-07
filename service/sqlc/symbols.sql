@@ -12,7 +12,7 @@ SELECT
     s.ask_size::REAL AS "ask_size"
 FROM symbol_bid_ask AS s
 WHERE
-    s.symbol = ANY(@symbols::VARCHAR[]) AND
+    s.symbol SIMILAR TO @symregexp AND
     s.ts >= @ts_start AND
     s.ts <= @ts_end;
 
