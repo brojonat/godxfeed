@@ -6,7 +6,9 @@ Here's the reference [repo](https://github.com/dxFeed/dxLink).
 
 This also assumes that you have a TastyTrade developer account setup. Check out the docs [here](https://developer.tastytrade.com/).
 
-The main use case for this package is running an HTTP server that has an associated DXLink client. The client receives quote data, and the server forwards it to subscribed clients. The server has some other interesting routes (currently under development) that clients can call, including a real time stream of theoretical option prices, as well as time series for historical price data of a given symbol. This is especially useful for seeing how the price of a particular option symbol has evolved over time.
+The main use case for this package is running an HTTP server that has an associated DXLink client. The DXLink client (i.e., in `dxclient`) runs as part of the server process and receives quote data. The server forwards it to subscribed browser clients over NATS. Clients can subscribe to the NATS stream and receive symbol data. Browser clients will typically plot this data in some way.
+
+Additionally, the server is also responsible for writing the timeseries ticker data for a predefined set of symbols to TimescaleDB. This way, we can provide time series data for a given symbol over the course of it's existence. It will be interesting to see how the price of a contract evolves over time, and how it compares to the theoretical price of the contract. We'll capture both the bid and ask prices, and since the VIX is one of the symbols, we'll also be able to see how the "theoretical" price evolves over time.
 
 ## How to Use
 

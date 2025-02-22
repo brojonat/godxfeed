@@ -3,12 +3,11 @@ import * as Plot from "https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6/+esm"
 async function fetchAPI() {
   // Read the data
   let data = await d3.json(
-    `${ENDPOINT}/plot-dummy-data?` +
-      new URLSearchParams({
-        symbol: SYMBOL,
-        group: "expiry",
-        expiry: "241001",
-      }).toString(),
+    `${ENDPOINT}/plot-dummy-data?${new URLSearchParams({
+      symbol: SYMBOL,
+      group: "expiry",
+      expiry: "241001",
+    }).toString()}`,
     {
       headers: new Headers({
         Authorization: localStorage.getItem(LSATK),
@@ -18,27 +17,22 @@ async function fetchAPI() {
 
   data = data
     .map((d) => {
-      d["ts"] = d3.isoParse(d["ts"]);
+      d.ts = d3.isoParse(d.ts);
       return d;
     })
     .filter((d) => {
-      return d["symbol"] != "SPY";
+      return d.symbol !== "SPY";
     });
-  // .filter((d) => {
-  //   // get a subsample of the data
-  //   return d3.randomInt(2)() === 0;
-  // });
-  // console.log(data);
 
   // get unique ticker symbols
   const rowsBySym = {};
-  data.forEach((d) => {
-    if (rowsBySym.hasOwnProperty(d.symbol)) {
-      return rowsBySym[d.symbol].push(d);
+  for (const d of data) {
+    if (Object.hasOwn(rowsBySym, d.symbol)) {
+      rowsBySym[d.symbol].push(d);
     } else {
       rowsBySym[d.symbol] = [d];
     }
-  });
+  }
   const rows = [];
   // histogram equity prices
   const equityBins = d3
@@ -51,7 +45,7 @@ async function fetchAPI() {
   const equityRows = equityBins.map((d) => {
     return {
       symbol: SYMBOL,
-      price: (d["x0"] + d["x1"]) / 2,
+      price: (d.x0 + d.x1) / 2,
       count: Object.keys(d).length - 2,
     };
   });
@@ -70,7 +64,7 @@ async function fetchAPI() {
     const optRows = optBins.map((d) => {
       return {
         symbol: sym,
-        price: (d["x0"] + d["x1"]) / 2,
+        price: (d.x0 + d.x1) / 2,
         count: Object.keys(d).length - 2,
       };
     });

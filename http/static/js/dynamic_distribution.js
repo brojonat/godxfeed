@@ -53,57 +53,33 @@ class MaxLengthQueue {
   }
 }
 
-function getWS(endpoint) {
-  // Create a new WebSocket object
-  const socket = new WebSocket(endpoint);
-
-  // Event listener for when the connection is opened
-  socket.onopen = function (event) {
-    console.log("WebSocket connection opened");
-
-    // subscribe to the random channel
-    socket.send(
-      JSON.stringify({ type: "subscribe", body: { topic: "TOPIC" } })
-    );
-  };
-
-  // Event listener for receiving messages from the server
-  socket.onmessage = function (event) {
-    console.log("you probably forgot to override the onmessage method");
-    console.log("Message from server:", event.data);
-  };
-
-  // Event listener for when the connection is closed
-  socket.onclose = function (event) {
-    console.log("WebSocket connection closed");
-  };
-
-  // Event listener for errors
-  socket.onerror = function (event) {
-    console.log(socket);
-    console.error("WebSocket error:", event);
-  };
-  return socket;
+async function getNATS() {
+  // Create NATS connection
+  const nc = await nats.connect({ servers: "ws://localhost:9222" });
+  console.log("Connected to NATS server");
+  return nc;
 }
 
-// this will define a blob of data, then then incrementally push the data into a queue. The
-// queue underlies a d3 distribution plot, so we'll see what the plot looks like as it
-// updates and dances in real time. Cool? Cool. Hopefully. If this one works, we'll
-// generalize to a ridge line and let users dynamically pick the symbols to display.
+// this will define a blob of data, then incrementally push the data into a queue.
 async function run() {
   const qSize = 500;
-  // run the chart setup once
   const chartParams = setupChart(qSize);
-
-  // fixed length data container we can push data into
   const data = new MaxLengthQueue(qSize);
 
-  // subscribe to the server for updates and asynchronously fill the distribution
-  const socket = getWS("ws://localhost:8080/ws");
-  socket.onmessage = function (event) {
-    data.enqueue(JSON.parse(event.data));
-    updateChart(chartParams, data);
-  };
+  // Connect to NATS and subscribe to updates
+  try {
+    const nc = await getNATS();
+    const sub = nc.subscribe("TOPIC");
+
+    // Process incoming messages
+    for await (const msg of sub) {
+      const parsed = JSON.parse(new TextDecoder().decode(msg.data));
+      data.enqueue(parsed);
+      updateChart(chartParams, data);
+    }
+  } catch (error) {
+    console.error("NATS connection error:", error);
+  }
 }
 
 function setupChart(qSize) {
@@ -113,36 +89,6 @@ function setupChart(qSize) {
   const margin = { top: 20, right: 20, bottom: 70, left: 40 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
-
-  const gwidth = 200;
-  const gheight = 200;
-  ge = svg
-    .append("g")
-    .attr("transform", `translate(${width - gwidth},${-gwidth / 2})`);
-  svg
-    .append("text")
-    .attr("id", "gauge-text")
-    .attr("class", "gauge-text")
-    .attr("text-anchor", "middle")
-    .attr("x", width - gwidth + gwidth / 2)
-    .attr("y", gheight / 2 + 40)
-    // .attr("transform", `translate(${width - gwidth},${gwidth + 50})`)
-    .text(`0% (0/${qSize})`);
-  const gauge = new window.d3SimpleGauge.SimpleGauge({
-    el: ge,
-    width: gwidth, // The width of the gauge
-    height: gheight, // The height of the gauge
-    interval: [0, qSize], // The interval (min and max values) of the gauge (optional)
-    sectionsCount: 3, // The number of sections in the gauge
-    needleRadius: 10,
-    // needleColor: "black", // The needle color
-    // sectionsColors: [
-    //   // The color of each section
-    //   "rgb(255, 0, 0)",
-    //   "#ffa500",
-    //   "green",
-    // ],
-  });
 
   // Create initial scales
   const [min, max] = [0, 10];
@@ -189,18 +135,10 @@ function setupChart(qSize) {
     .attr("transform", `rotate(-90,${margin.left / 2},${margin.top})`)
     .text("relative frequency (counts)");
 
-  return { width, height, margin, innerWidth, innerHeight, g, gx, gy, gauge };
+  return { width, height, margin, innerWidth, innerHeight, g, gx, gy };
 }
 
 function updateChart(chartParams, data) {
-  // update the gauge
-  d3.select("#gauge-text").text(
-    `${Math.round((data.queue.length / data.maxLength) * 100)}% (${
-      data.queue.length
-    }/${data.maxLength})`
-  );
-
-  chartParams.gauge.value = data.queue.length;
   // Skip cases with 0 or 1 element in data since it'll result in NaNs or a bin
   // with x0 == x1 (i.e., zero width) which throws an error
   if (data.queue.length < 2) {
@@ -360,7 +298,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     await run();
   } catch (error) {
-    // Handle errors
-    console.error(error);
+    console.error("Error in main execution:", error);
   }
 });
