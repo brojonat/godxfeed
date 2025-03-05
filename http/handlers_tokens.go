@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/brojonat/godxfeed/http/api"
 	"github.com/brojonat/godxfeed/service"
 	"github.com/golang-jwt/jwt"
 )
@@ -28,7 +28,35 @@ func handleIssueToken(s service.Service) http.HandlerFunc {
 		}
 		token, _ := generateAccessToken(c)
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(api.DefaultJSONResponse{Message: token})
+		json.NewEncoder(w).Encode(struct {
+			Token string `json:"token"`
+		}{Token: token})
+	}
+}
+
+func handleRefreshToken(s service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(struct {
+			Token string `json:"token"`
+		}{Token: token})
+	}
+}
+
+func handleNATSCallout(s service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(struct {
+			Token string `json:"token"`
+		}{Token: token})
+	}
+}
+
+func handleTestBearerToken(s service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	}
 }
 
@@ -55,6 +83,11 @@ func handleNewSessionToken(s service.Service) http.HandlerFunc {
 
 func handleNewStreamerToken(s service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		st := r.URL.Query().Get("session-token")
+		if st == "" {
+			writeBadRequestError(w, fmt.Errorf("must supply session-token"))
+			return
+		}
 		twr, err := s.NewStreamerToken()
 		writeServiceResponse(s, w, twr, err)
 	}

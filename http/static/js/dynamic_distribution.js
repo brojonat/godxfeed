@@ -53,13 +53,6 @@ class MaxLengthQueue {
   }
 }
 
-async function getNATS() {
-  // Create NATS connection
-  const nc = await nats.connect({ servers: "ws://localhost:9222" });
-  console.log("Connected to NATS server");
-  return nc;
-}
-
 // this will define a blob of data, then incrementally push the data into a queue.
 async function run() {
   const qSize = 500;
@@ -69,13 +62,14 @@ async function run() {
   // Connect to NATS and subscribe to updates
   try {
     const nc = await getNATS();
-    const sub = nc.subscribe("TOPIC");
+    const sub = nc.subscribe("godxfeed");
 
     // Process incoming messages
     for await (const msg of sub) {
       const parsed = JSON.parse(new TextDecoder().decode(msg.data));
       data.enqueue(parsed);
       updateChart(chartParams, data);
+      console.log("enqueued", parsed);
     }
   } catch (error) {
     console.error("NATS connection error:", error);

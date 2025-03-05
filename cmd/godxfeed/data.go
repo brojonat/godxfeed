@@ -1,15 +1,27 @@
 package main
 
 import (
-	"context"
-	"fmt"
-
 	"github.com/urfave/cli/v2"
 )
 
 func get_symbol_data(ctx *cli.Context) error {
-	ctx.Context = context.WithValue(ctx.Context, ctxKeyMinimalSetup, true)
-	tts, err := setupService(ctx)
+	tts, err := setupService(
+		ctx.Context,
+		getDefaultLogger(ctx.Int("log-level")),
+		ctx.String("listen-port"),
+		ctx.String("tastyworks-endpoint"),
+		ctx.String("session-token"),
+		ctx.String("dxfeed-endpoint"),
+		ctx.String("streamer-token"),
+		true,
+		ctx.String("database"),
+		ctx.String("nats-url"),
+		ctx.String("nats-auth-user"),
+		ctx.String("nats-auth-password"),
+		ctx.String("nats-godxfeed-user"),
+		ctx.String("nats-godxfeed-password"),
+		ctx.String("nats-nkey-seed"),
+	)
 	if err != nil {
 		return err
 	}
@@ -18,38 +30,25 @@ func get_symbol_data(ctx *cli.Context) error {
 }
 
 func get_option_chain(ctx *cli.Context) error {
-	ctx.Context = context.WithValue(ctx.Context, ctxKeyMinimalSetup, true)
-	tts, err := setupService(ctx)
+	tts, err := setupService(
+		ctx.Context,
+		getDefaultLogger(ctx.Int("log-level")),
+		ctx.String("listen-port"),
+		ctx.String("tastyworks-endpoint"),
+		ctx.String("session-token"),
+		ctx.String("dxfeed-endpoint"),
+		ctx.String("streamer-token"),
+		true,
+		ctx.String("database"),
+		ctx.String("nats-url"),
+		ctx.String("nats-auth-user"),
+		ctx.String("nats-auth-password"),
+		ctx.String("nats-godxfeed-user"),
+		ctx.String("nats-godxfeed-password"),
+		ctx.String("nats-nkey-seed"),
+	)
 	if err != nil {
 		return err
 	}
 	return writeCLIResponse(tts.GetOptionChain(ctx.String("symbol")))
-}
-
-func stream_symbol(ctx *cli.Context) error {
-	tts, err := setupService(ctx)
-	if err != nil {
-		return err
-	}
-	// Get symbols. Only streaming top SYMBOL_COUNT symbols for now; will have
-	// to chunk subscription calls in the future since they apparently limit the
-	// number you can subscribe to at once.
-	syms, err := tts.GetRelatedSymbols(ctx.String("symbol"))
-	if err != nil {
-		return fmt.Errorf("could not get symbol data: %v", err)
-	}
-	if ctx.Int("symbol-count") < 1 {
-		return fmt.Errorf("symbol-count must be >=1")
-	}
-	syms = syms[0:ctx.Int("symbol-count")]
-
-	// stream
-	c, err := tts.StreamSymbols(ctx.Context, syms)
-	if err != nil {
-		return fmt.Errorf("could not get stream symbol data: %w", err)
-	}
-	for b := range c {
-		fmt.Printf("%s\n", b)
-	}
-	return nil
 }

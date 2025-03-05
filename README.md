@@ -32,17 +32,32 @@ While you're at it, you should set these in the `service/.env` file as well. You
 export $(grep -v '^#' service/.env | xargs)
 ```
 
+or you can do
+
+```bash
+set -o allexport && source service/.env && set +o allexport
+```
+
 Get in the habit of doing this since this file has a number of other envs you need to specify (e.g., database and Temporal connection strings, ports, keys, etc.).
 
 Assuming you've run the above, you can do a smoke test to get your account info with the following:
 
 ```bash
 # in one terminal, run the HTTP server on :8080
-go build -o cli cmd/godxfeed/*.go && ./cli run http-server
-# in another terminal, first you need to get a JWT for interacting with the server
-curl -X POST -u "{{EMAIL}}:{{SERVER_SECRET_KEY}}" http://localhost:8080/token
-# now you can test your session token
-curl -H "Authorization: Bearer {{AUTH_TOKEN}}" http://localhost:8080/test-session-token --url-query session-token={{SESSION_TOKEN}}
+make
+# update the session and streamer tokens in the env file
+./cli admin get-session-token
+./cli admin get-streamer-token
+
+# now in another terminal, run the HTTP server
+./cli run http-server
+
+# get a bearer token
+./cli admin get-bearer-token
+
+# test the bearer token
+./cli admin test-bearer-token
+
 ```
 
 Ok, cool, hopefully you're connected to your account. Now we can get some symbol data:
@@ -56,3 +71,16 @@ And to get the options chain for a symbol, you can do the following (note that w
 ```
 ./cli data option-chain -s SPY | jq '.data.items | .[0:500] | map({"streamer-symbol": .["streamer-symbol"], DTE: .["days-to-expiration"]})'
 ```
+
+## Web Pages
+
+You can also view the web pages by running the server and then going to `http://localhost:8080/static/index.html` in your browser. This will show you a dynamic histogram. We have more pages we're working on; you can go to:
+
+- `http://localhost:8080/plots?symbol=spy&plot_kind=ridgeline` to see a ridgeline plot for SPY.
+- `http://localhost:8080/plots?symbol=spy&plot_kind=nats` to connect to the NATS stream for SPY.
+
+## TODO
+
+- Add a page that shows the timeseries data for a given symbol.
+- Add a page that shows the option chain for a given symbol.
+- Add a page that shows the historical data for a given symbol.

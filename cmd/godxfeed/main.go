@@ -7,9 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
-	dx "github.com/brojonat/godxfeed/dxclient"
 	"github.com/brojonat/godxfeed/service/api"
 	"github.com/urfave/cli/v2"
 )
@@ -47,9 +45,71 @@ func main() {
 	app := &cli.App{
 		Commands: []*cli.Command{
 			{
+				Name:  "debug",
+				Usage: "Debugging commands",
+				Subcommands: []*cli.Command{
+					{
+						Name:  "publish-nats",
+						Usage: "Publish messages to NATS",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:  "nats-url",
+								Usage: "NATS URL",
+								Value: os.Getenv("NATS_URL"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-godxfeed-user",
+								Usage: "NATS godxfeed user.",
+								Value: os.Getenv("NATS_GODXFEED_USER"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-godxfeed-password",
+								Usage: "NATS godxfeed password.",
+								Value: os.Getenv("NATS_GODXFEED_PASSWORD"),
+							},
+							&cli.StringSliceFlag{
+								Name:     "nats-topic",
+								Usage:    "NATS topics (can be specified multiple times)",
+								Required: true,
+							},
+						},
+						Action: func(ctx *cli.Context) error {
+							return publish_nats(ctx)
+						},
+					},
+				},
+			},
+			{
 				Name:  "admin",
 				Usage: "Administrative commands",
 				Subcommands: []*cli.Command{
+					{
+						Name:  "get-bearer-token",
+						Usage: "Makes an HTTP request for a new bearer token. Expires every 2 weeks.",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "godxfeed-endpoint",
+								Aliases: []string{"tw"},
+								Value:   os.Getenv("GODXFEED_ENDPOINT"),
+								Usage:   "godxfeed HTTP endpoint",
+							},
+							&cli.StringFlag{
+								Name:     "username",
+								Aliases:  []string{"u"},
+								Usage:    "Email to issue the JWT to.",
+								Required: true,
+							},
+							&cli.StringFlag{
+								Name:     "password",
+								Aliases:  []string{"p"},
+								Usage:    "Server secret key used for JWTs.",
+								Required: true,
+							},
+						},
+						Action: func(ctx *cli.Context) error {
+							return new_bearer_token(ctx)
+						},
+					},
 					{
 						Name:  "get-session-token",
 						Usage: "Get a new session token. Expires every 24 hours. Don't request more often than necessary.",
@@ -72,6 +132,11 @@ func main() {
 								Usage:    "TWAPI sandbox password",
 								Required: true,
 							},
+							&cli.StringFlag{
+								Name:  "env-path",
+								Usage: "Path to .env file to update with the session token",
+								Value: "",
+							},
 						},
 						Action: func(ctx *cli.Context) error {
 							return new_session_token(ctx)
@@ -92,6 +157,11 @@ func main() {
 								Aliases: []string{"st", "s"},
 								Value:   os.Getenv("SESSION_TOKEN"),
 								Usage:   "TWAPI session token. Expires every 24h. Use new-session-token to get a new token.",
+							},
+							&cli.StringFlag{
+								Name:  "env-path",
+								Usage: "Path to .env file to update with the streamer token",
+								Value: "",
 							},
 						},
 						Action: func(ctx *cli.Context) error {
@@ -164,55 +234,6 @@ func main() {
 							return get_option_chain(ctx)
 						},
 					},
-					{
-						Name:  "stream-symbol",
-						Usage: "stream the equity symbol and related option symbols",
-						Flags: []cli.Flag{
-							&cli.StringFlag{
-								Name:    "database",
-								Aliases: []string{"db", "d"},
-								Usage:   "Database endpoint",
-								Value:   os.Getenv("DATABASE_URL"),
-							},
-							&cli.StringFlag{
-								Name:    "tastyworks-endpoint",
-								Aliases: []string{"tw"},
-								Value:   "api.tastyworks.com",
-								Usage:   "TWAPI base url",
-							},
-							&cli.StringFlag{
-								Name:    "dxfeed-endpoint",
-								Aliases: []string{"se"},
-								Usage:   "DXLINK streaming endpoint.",
-								Value:   "tasty-openapi-ws.dxfeed.com/realtime",
-							},
-							&cli.StringFlag{
-								Name:  "session-token",
-								Value: os.Getenv("SESSION_TOKEN"),
-								Usage: "TWAPI session token. Expires every 24h. Use `new-session-token` to get a new token.",
-							},
-							&cli.StringFlag{
-								Name:  "streamer-token",
-								Usage: "DXLINK auth token.",
-								Value: os.Getenv("STREAMER_TOKEN"),
-							},
-							&cli.StringFlag{
-								Name:    "symbol",
-								Aliases: []string{"s"},
-								Value:   "SPY",
-								Usage:   "Equity symbol of the option chain.",
-							},
-							&cli.IntFlag{
-								Name:    "symbol-count",
-								Aliases: []string{"count", "c"},
-								Value:   1,
-								Usage:   "Number of symbols to stream (equity plus options)",
-							},
-						},
-						Action: func(ctx *cli.Context) error {
-							return stream_symbol(ctx)
-						},
-					},
 				},
 			},
 			{
@@ -269,6 +290,76 @@ func main() {
 								Usage: "DXLINK auth token.",
 								Value: os.Getenv("STREAMER_TOKEN"),
 							},
+							&cli.StringFlag{
+								Name:  "nats-url",
+								Usage: "NATS URL.",
+								Value: os.Getenv("NATS_URL"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-browser-url",
+								Usage: "NATS browser URL.",
+								Value: os.Getenv("NATS_BROWSER_URL"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-nkey-public-key",
+								Usage: "NATS nkey public key.",
+								Value: os.Getenv("NATS_NKEY_PUBLIC_KEY"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-nkey-seed",
+								Usage: "NATS nkey seed.",
+								Value: os.Getenv("NATS_NKEY_SEED"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-auth-user",
+								Usage: "NATS auth user.",
+								Value: os.Getenv("NATS_AUTH_USER"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-auth-password",
+								Usage: "NATS auth password.",
+								Value: os.Getenv("NATS_AUTH_PASSWORD"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-godxfeed-user",
+								Usage: "NATS godxfeed user.",
+								Value: os.Getenv("NATS_GODXFEED_USER"),
+							},
+							&cli.StringFlag{
+								Name:  "nats-godxfeed-password",
+								Usage: "NATS godxfeed password.",
+								Value: os.Getenv("NATS_GODXFEED_PASSWORD"),
+							},
+							&cli.IntFlag{
+								Name:  "max-symbol-count",
+								Usage: "Maximum number of symbols to stream. Takes precedence over symbols.",
+								Value: 25,
+							},
+							&cli.StringSliceFlag{
+								Name:    "symbols",
+								Aliases: []string{"symbol", "sym", "s"},
+								Usage:   "Symbols to stream.",
+							},
+							&cli.BoolFlag{
+								Name:  "no-symbol-handlers",
+								Usage: "Disable all symbol data handlers.",
+								Value: false,
+							},
+							&cli.BoolFlag{
+								Name:  "streamer-debug",
+								Usage: "Enable the debug logging streamer handler.",
+								Value: false,
+							},
+							&cli.BoolFlag{
+								Name:  "streamer-persist",
+								Usage: "Persist the symbol data to the database.",
+								Value: false,
+							},
+							&cli.BoolFlag{
+								Name:  "streamer-publish",
+								Usage: "Publish the symbol data to NATS.",
+								Value: false,
+							},
 						},
 						Action: func(ctx *cli.Context) error {
 							return serve_http(ctx)
@@ -276,94 +367,9 @@ func main() {
 					},
 				},
 			},
-			{
-				Name:  "debug-dxlink",
-				Usage: "Debugging route for DXLink stuff.",
-				Flags: []cli.Flag{
-					&cli.IntFlag{
-						Name:  "log-level",
-						Value: 0,
-						Usage: "Truncate logs below this level (uses slog levels, -4 for debug and above).",
-					},
-					&cli.StringFlag{
-						Name:  "dxfeed-endpoint",
-						Value: "tasty-openapi-ws.dxfeed.com/realtime",
-						Usage: "DXLINK WS endpoint.",
-					},
-					&cli.StringFlag{
-						Name:  "streamer-token",
-						Value: os.Getenv("STREAMER_TOKEN"),
-						Usage: "DXLINK auth token.",
-					},
-					&cli.StringFlag{
-						Name:    "symbol",
-						Aliases: []string{"s"},
-						Value:   "SPY",
-						Usage:   "Symbol to pull data for.",
-					},
-				},
-				Action: func(ctx *cli.Context) error {
-					return debug_dxlink(ctx)
-				},
-			},
 		}}
 
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func debug_dxlink(ctx *cli.Context) error {
-	sym := strings.ToUpper(ctx.String("symbol"))
-	url := fmt.Sprintf("wss://%s", ctx.String("dxfeed-endpoint"))
-	token := ctx.String("streamer-token")
-
-	lvl := new(slog.LevelVar)
-	if level := ctx.Int("log-level"); level != 0 {
-		lvl.Set(slog.Level(level))
-	}
-
-	logfunc := func(lvl int, msg string, args ...any) {
-		switch lvl {
-		case int(slog.LevelDebug):
-			slog.Debug(msg, args...)
-		case int(slog.LevelInfo):
-			slog.Info(msg, args...)
-		case int(slog.LevelWarn):
-			slog.Warn(msg, args...)
-		case int(slog.LevelError):
-			slog.Error(msg, args...)
-		}
-	}
-
-	c := dx.NewClient(logfunc)
-	if err := c.Dial(ctx.Context, url, func(ms dx.MessageSetup) error { return nil }); err != nil {
-		return fmt.Errorf("dial failed: %w", err)
-	}
-	if err := c.Authenticate(token); err != nil {
-		return fmt.Errorf("auth failed: %w", err)
-	}
-	if err := c.Subscribe([]string{sym}); err != nil {
-		return fmt.Errorf("could not subscribe to %s: %v", sym, err)
-	}
-
-	done := make(chan error)
-	hid := "readloop"
-	c.AddMessageHandler(hid, func(m dx.Message) {
-		msg, ok := m.(dx.MessageFeedData)
-		if !ok {
-			return
-		}
-
-		b, err := msg.JSON()
-		if err != nil {
-			fmt.Printf("error: %v\n", err)
-			return
-		}
-
-		fmt.Printf("%s\n", string(b))
-	})
-	<-done
-
-	return nil
 }

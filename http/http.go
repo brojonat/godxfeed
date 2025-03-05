@@ -6,19 +6,23 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
-	"time"
+
+	"embed"
 
 	"github.com/brojonat/godxfeed/http/api"
 	"github.com/brojonat/godxfeed/service"
 	sapi "github.com/brojonat/godxfeed/service/api"
 	"github.com/brojonat/server-tools/stools"
-	bwebsocket "github.com/brojonat/websocket"
 	"github.com/gorilla/websocket"
 )
+
+//go:embed static
+var static embed.FS
 
 // FIXME: origins need updating
 // var upgrader = bwebsocket.DefaultUpgrader([]string{"http://localhost:9000", "http://localhost:9000"})
@@ -79,7 +83,8 @@ func RunHTTPServer(
 	twEndpoint,
 	twToken,
 	dxEndpoint,
-	dxToken string,
+	dxToken,
+	natsBrowserURL string,
 ) error {
 
 	// new router
@@ -105,17 +110,13 @@ func RunHTTPServer(
 	methods := normalizeCORSParams(ms)
 	origins := normalizeCORSParams(ogs)
 
-	// FIXME: once we're done iterating, shove this back into a embedded FS
-	// ridgelinePlotTemplate = template.Must(template.ParseFS(static, "static/templates/plots/ridgeline.tmpl"))
-	// jsFS, err := fs.Sub(static, "static")
-	// if err != nil {
-	// 	return nil, fmt.Errorf("startup: failed to setup js static file server: %w", err)
-	// }
-	// fsJS := http.FileServer(http.FS(jsFS))
-
-	// note the peculiar pathing because the cli is run from the root directory
-	ridgelinePlotTemplate = template.Must(template.ParseFiles("http/static/templates/plots/ridgeline.tmpl"))
-	fsJS := http.FileServer(http.Dir("http/static"))
+	ridgelinePlotTemplate = template.Must(template.ParseFS(static, "static/templates/plots/ridgeline.tmpl"))
+	natsPlotTemplate = template.Must(template.ParseFS(static, "static/templates/plots/nats.tmpl"))
+	jsFS, err := fs.Sub(static, "static")
+	if err != nil {
+		return fmt.Errorf("startup: failed to setup js static file server: %w", err)
+	}
+	fsJS := http.FileServer(http.FS(jsFS))
 	mux.Handle("GET /static/", http.StripPrefix("/static/", fsJS))
 
 	// smoke test/boot handlers
@@ -133,6 +134,26 @@ func RunHTTPServer(
 		handleIssueToken(tts),
 		atLeastOneAuth(basicAuthorizerCtxSetEmail(getSecretKey)),
 	))
+	mux.Handle("POST /refresh-token", stools.AdaptHandler(
+		handleRefreshToken(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+	mux.Handle("GET /test-bearer-token", stools.AdaptHandler(
+		handleTestBearerToken(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+	mux.Handle("GET /test-session-token", stools.AdaptHandler(
+		handleTestSessionToken(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+	mux.Handle("GET /nats-auth-callout", stools.AdaptHandler(
+		handleNATSCallout(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
 
 	// returns TastyTrade session token; requires Bearer token
 	mux.Handle("GET /session-token", stools.AdaptHandler(
@@ -143,14 +164,6 @@ func RunHTTPServer(
 		),
 	))
 	// returns DXFeed streamer token; requires Bearer token
-	mux.Handle("GET /test-session-token", stools.AdaptHandler(
-		handleTestSessionToken(tts),
-		apiMode(tts, maxBytes, headers, methods, origins),
-		atLeastOneAuth(
-			bearerAuthorizerCtxSetToken(getSecretKey),
-		),
-	))
-
 	mux.Handle("GET /streamer-token", stools.AdaptHandler(
 		handleNewStreamerToken(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
@@ -175,17 +188,9 @@ func RunHTTPServer(
 		),
 	))
 
-	mux.Handle("GET /ws", stools.AdaptHandler(
-		handleServeWS(tts),
-		// apiMode(tts, maxBytes, headers, methods, origins),
-		// atLeastOneAuth(
-		// 	bearerAuthorizerCtxSetToken(getSecretKey),
-		// ),
-	))
-
 	// plots!
 	mux.Handle("GET /plots", stools.AdaptHandler(
-		handleGetPlots(tts),
+		handleGetPlots(tts, natsBrowserURL),
 		atLeastOneAuth(basicAuthorizerCtxSetEmail(getSecretKey)),
 	))
 	mux.Handle("GET /plot-dummy-data", stools.AdaptHandler(
@@ -196,17 +201,4 @@ func RunHTTPServer(
 	addr = ":" + addr
 	tts.Log(int(slog.LevelInfo), fmt.Sprintf("listening on %s", addr))
 	return http.ListenAndServe(addr, mux)
-}
-
-func handleServeWS(tts service.Service) http.HandlerFunc {
-	return bwebsocket.ServeWS(
-		upgrader,
-		bwebsocket.DefaultSetupConn,
-		bwebsocket.NewClient,
-		tts.WSClientRegister,
-		tts.WSClientUnregister,
-		45*time.Second,
-		[]bwebsocket.MessageHandler{tts.WSClientHandleMessage()},
-	)
-
 }

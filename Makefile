@@ -5,8 +5,12 @@ define setup_env
 endef
 
 build-cli:
+	$(call setup_env, service/.env)
 	go build -o cli cmd/godxfeed/*.go
 
 run-http-server:
 	$(call setup_env, service/.env)
-	./cli run http-server
+	./cli run http-server \
+		--streamer-debug \
+		--streamer-persist \
+		--streamer-publish

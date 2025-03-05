@@ -18,9 +18,11 @@ import (
 
 const (
 	PlotKindRidgeLine string = "ridgeline"
+	PlotKindNats      string = "nats"
 )
 
 var ridgelinePlotTemplate *template.Template
+var natsPlotTemplate *template.Template
 
 type ridgelinePlotTemplateData struct {
 	Endpoint                 string
@@ -28,8 +30,17 @@ type ridgelinePlotTemplateData struct {
 	LocalStorageAuthTokenKey string
 	Symbol                   string
 }
+type natsPlotTemplateData struct {
+	Endpoint                 string
+	NATS_URL                 string
+	PlotKind                 string
+	LocalStorageAuthTokenKey string
+	Symbol                   string
+	BasicAuthEmail           string
+	BasicAuthPassword        string
+}
 
-func handleGetPlots(s service.Service) http.HandlerFunc {
+func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pk := r.URL.Query().Get("plot_kind")
 		symbol := r.URL.Query().Get("symbol")
@@ -48,6 +59,23 @@ func handleGetPlots(s service.Service) http.HandlerFunc {
 			}
 			w.WriteHeader(http.StatusOK)
 			err := ridgelinePlotTemplate.Execute(w, data)
+			if err != nil {
+				s.Log(int(slog.LevelError), "Error rendering template", "error", err)
+				writeInternalError(s, w, err)
+				return
+			}
+		case PlotKindNats:
+			data := natsPlotTemplateData{
+				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
+				NATS_URL:                 natsBrowserURL,
+				BasicAuthEmail:           "brojonat@gmail.com",
+				BasicAuthPassword:        os.Getenv("SECRET_KEY"),
+				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
+				PlotKind:                 pk,
+				Symbol:                   symbol,
+			}
+			w.WriteHeader(http.StatusOK)
+			err := natsPlotTemplate.Execute(w, data)
 			if err != nil {
 				s.Log(int(slog.LevelError), "Error rendering template", "error", err)
 				writeInternalError(s, w, err)

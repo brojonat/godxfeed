@@ -33,11 +33,8 @@ type Client interface {
 	Dial(context.Context, string, func(MessageSetup) error) error
 	// Authenticate performs authentication
 	Authenticate(string) error
+	// Subscribe subscribes to the supplied symbols
 	Subscribe([]string) error
-	// AddMessageHandler adds a handler that will receive each message
-	AddMessageHandler(string, func(Message))
-	// RemoveMessageHandler removes the handler specified by the supplied string
-	RemoveMessageHandler(string)
 	// Send sends the supplied message to the dxlink service
 	Send(Message) error
 	// Returns a channel of []byte consumers can listen on for all messages
@@ -89,13 +86,13 @@ func (c *client) Dial(ctx context.Context, addr string, onSetupReply func(Messag
 	done := make(chan error)
 
 	hid := fmt.Sprintf("_onSetup-%s", uuid.New())
-	c.AddMessageHandler(hid, func(m Message) {
+	c.addMessageHandler(hid, func(m Message) {
 		msg, ok := m.(MessageSetup)
 		if !ok {
 			return
 		}
 		// remove handler now that setup is done
-		c.RemoveMessageHandler(hid)
+		c.removeMessageHandler(hid)
 
 		// send a keepalive message a bit less than every keepalive period
 		go func() {
@@ -128,7 +125,7 @@ func (c *client) Authenticate(token string) error {
 	done := make(chan error)
 	hid := fmt.Sprintf("_onAuth-%s", uuid.New())
 	unauthorizedCount := 0
-	c.AddMessageHandler(hid, func(m Message) {
+	c.addMessageHandler(hid, func(m Message) {
 		msg, ok := m.(MessageAuthState)
 		if !ok {
 			return
@@ -146,7 +143,7 @@ func (c *client) Authenticate(token string) error {
 			return
 		}
 		// remove handler now that authentication is done
-		c.RemoveMessageHandler(hid)
+		c.removeMessageHandler(hid)
 		done <- nil
 	})
 
@@ -158,12 +155,12 @@ func (c *client) Authenticate(token string) error {
 func (c *client) openChannel(m MessageChannelRequest) error {
 	done := make(chan error)
 	hid := fmt.Sprintf("_onChannelRequest-%s", uuid.New())
-	c.AddMessageHandler(hid, func(m Message) {
+	c.addMessageHandler(hid, func(m Message) {
 		_, ok := m.(MessageChannelOpened)
 		if !ok {
 			return
 		}
-		c.RemoveMessageHandler(hid)
+		c.removeMessageHandler(hid)
 		c.Log(int(slog.LevelDebug), "completed channel open")
 		done <- nil
 	})
@@ -192,12 +189,12 @@ func (c *client) Subscribe(syms []string) error {
 	done := make(chan error)
 
 	hid := fmt.Sprintf("_onFeedSetup-%s", uuid.New())
-	c.AddMessageHandler(hid, func(m Message) {
+	c.addMessageHandler(hid, func(m Message) {
 		_, ok := m.(MessageFeedConfig)
 		if !ok {
 			return
 		}
-		c.RemoveMessageHandler(hid)
+		c.removeMessageHandler(hid)
 		c.Log(int(slog.LevelDebug), "completed feed setup")
 		done <- nil
 	})
@@ -212,12 +209,12 @@ func (c *client) Subscribe(syms []string) error {
 	}
 
 	hid = fmt.Sprintf("_onFeedSubscription-%s", uuid.New())
-	c.AddMessageHandler(hid, func(m Message) {
+	c.addMessageHandler(hid, func(m Message) {
 		_, ok := m.(MessageFeedConfig)
 		if !ok {
 			return
 		}
-		c.RemoveMessageHandler(hid)
+		c.removeMessageHandler(hid)
 		c.Log(int(slog.LevelDebug), "completed feed subscription")
 		done <- nil
 	})
@@ -240,7 +237,7 @@ func (c *client) Subscribe(syms []string) error {
 func (c *client) C() (<-chan Message, string) {
 	out := make(chan Message)
 	hid := fmt.Sprintf("streamer-%s", uuid.New())
-	c.AddMessageHandler(hid, func(m Message) {
+	c.addMessageHandler(hid, func(m Message) {
 		out <- m
 	})
 	return out, hid
@@ -425,13 +422,13 @@ func (c *client) readForever(ctx context.Context) {
 
 }
 
-func (c *client) AddMessageHandler(name string, f func(Message)) {
+func (c *client) addMessageHandler(name string, f func(Message)) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.handlers[name] = f
 }
 
-func (c *client) RemoveMessageHandler(name string) {
+func (c *client) removeMessageHandler(name string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	delete(c.handlers, name)
