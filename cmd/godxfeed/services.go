@@ -102,9 +102,9 @@ func setupService(
 // getSymbolDataHandlers returns a list of handlers that handle feed
 // data for a symbol. You can configure your handlers to record data, to not
 // record data, maybe just record some data, etc. This function may grow....very
-// large, but it's basically an entire implementation of the service. The ctx
-// is used to configure the handlers. In the future, we can easily be more
-// dynamic with the handler selection here.
+// large, but it's basically the entire implementation of the dxfeed handlers. Note
+// that the CLI ctx is used to configure the handlers. In the future, we can easily
+// be more dynamic with the handler selection here.
 func getSymbolDataHandlers(tts service.Service, ctx *cli.Context) []func([]byte) error {
 	// if the no-stream flag is set, don't return any handlers
 	handlers := []func([]byte) error{}
@@ -199,12 +199,14 @@ func serve_http(ctx *cli.Context) error {
 	if maxSymbolCount < 0 {
 		return fmt.Errorf("max-symbol-count must be greater than 0")
 	}
-	if ctx.Bool("symbol-method-n-related") && len(symbols) != 1 {
-		return fmt.Errorf("symbol-method-n-related requires exactly one symbol")
-	}
 
 	syms := []string{}
-	if ctx.Bool("symbol-method-n-related") {
+	symbolMethod := ctx.String("symbol-method")
+	switch symbolMethod {
+	case "n-related":
+		if len(symbols) != 1 {
+			return fmt.Errorf("symbol-method-n-related requires exactly one symbol")
+		}
 		syms, err = tts.GetStreamSymbols(
 			symbols[0],
 			service.SymbolMethodNRelatedOptions(tts, ctx.Int("max-symbol-count")),
@@ -212,7 +214,7 @@ func serve_http(ctx *cli.Context) error {
 		if err != nil {
 			return fmt.Errorf("could not get symbol data: %v", err)
 		}
-	} else {
+	default:
 		syms = symbols
 	}
 

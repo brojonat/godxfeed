@@ -72,6 +72,11 @@ func main() {
 								Usage:    "NATS topics (can be specified multiple times)",
 								Required: true,
 							},
+							&cli.StringFlag{
+								Name:  "interval",
+								Usage: "Interval to publish messages. Default is 1s.",
+								Value: "1s",
+							},
 						},
 						Action: func(ctx *cli.Context) error {
 							return publish_nats(ctx)
@@ -340,23 +345,28 @@ func main() {
 								Aliases: []string{"symbol", "sym", "s"},
 								Usage:   "Symbols to stream.",
 							},
+							&cli.StringFlag{
+								Name:  "symbol-method",
+								Usage: "Method to use to get symbols.",
+								Value: "n-related",
+							},
 							&cli.BoolFlag{
 								Name:  "no-symbol-handlers",
 								Usage: "Disable all symbol data handlers.",
 								Value: false,
 							},
 							&cli.BoolFlag{
-								Name:  "streamer-debug",
+								Name:  "handler-debug",
 								Usage: "Enable the debug logging streamer handler.",
 								Value: false,
 							},
 							&cli.BoolFlag{
-								Name:  "streamer-persist",
+								Name:  "handler-persist",
 								Usage: "Persist the symbol data to the database.",
 								Value: false,
 							},
 							&cli.BoolFlag{
-								Name:  "streamer-publish",
+								Name:  "handler-publish",
 								Usage: "Publish the symbol data to NATS.",
 								Value: false,
 							},

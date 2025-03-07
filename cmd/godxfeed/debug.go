@@ -22,7 +22,11 @@ func publish_nats(ctx *cli.Context) error {
 	defer nc.Close()
 
 	// Create a ticker for regular intervals
-	ticker := time.NewTicker(1 * time.Second)
+	interval, err := time.ParseDuration(ctx.String("interval"))
+	if err != nil {
+		return err
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Loop with context cancellation

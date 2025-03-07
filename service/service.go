@@ -511,7 +511,7 @@ func (s *service) GetStreamSymbols(symbol string, getRelateds func(string) ([]st
 // ONCE PER SERVICE INSTANCE. The service can write the data to a database and
 // then we can serve the aggregate data to any number of clients
 func (s *service) StreamAPIFeedCompactQuoteData(ctx context.Context, syms []string) (<-chan []api.FeedCompactQuote, error) {
-	cl := func(level int, msg string, args ...interface{}) {
+	cl := func(level int, msg string, args ...any) {
 		s.Log(level, msg, args...)
 	}
 	client := dx.NewClient(cl)
@@ -534,6 +534,24 @@ func (s *service) StreamAPIFeedCompactQuoteData(ctx context.Context, syms []stri
 			}
 		}
 	}()
+
+	fmt.Println("dialing dxlink", s.dxEndpoint)
+	err := client.Dial(ctx, fmt.Sprintf("wss://%s", s.dxEndpoint), func(msg dx.MessageSetup) error {
+		fmt.Println("msg", msg)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not dial dxlink: %w", err)
+	}
+	err = client.Authenticate(s.streamerToken)
+	if err != nil {
+		return nil, fmt.Errorf("could not authenticate: %w", err)
+	}
+	err = client.Subscribe(syms)
+	if err != nil {
+		return nil, fmt.Errorf("could not subscribe to symbols: %w", err)
+	}
+
 	return out, nil
 }
 
@@ -551,9 +569,14 @@ func FilterAPIFeedCompactQuoteData(msg dx.Message) ([]api.FeedCompactQuote, erro
 	// replace those bytes with a suitable zero value (i.e., 0).
 	m = bytes.ReplaceAll(m, []byte(`"NaN"`), []byte(`0.0`))
 
+	// {\"type\":\"FEED_DATA\",\"channel\":1,\"data\":[{\"eventType\":\"Quote\",\"eventSymbol\":\"SPY\",\"bidPrice\":576.39,\"askPrice\":576.42,\"bidSize\":185.0,\"askSize\":200.0}]}
+	var feedMsg dx.MessageFeedData
+	if err := json.Unmarshal(m, &feedMsg); err != nil {
+		return nil, fmt.Errorf("could not deserialize message (%w): %s", err, m)
+	}
 	var data []dx.FeedCompactQuote
-	if err := json.Unmarshal(m, &data); err != nil {
-		return nil, fmt.Errorf("could not deserialize FEED_DATA data (%w): %s", err, m)
+	if err := json.Unmarshal(feedMsg.Data, &data); err != nil {
+		return nil, fmt.Errorf("could not deserialize feed data (%w): %s", err, feedMsg.Data)
 	}
 
 	// parse the data into our own api.FeedCompactQuote struct

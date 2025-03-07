@@ -107,4 +107,6 @@ async function fetchAPI() {
   $("#loading").toggle();
 }
 
+// This is the main entry point for the ridgeline plot.
+// It will run the fetchAPI() function when the page loads.
 $(document).ready(async () => await fetchAPI());

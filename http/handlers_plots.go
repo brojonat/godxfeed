@@ -17,12 +17,14 @@ import (
 )
 
 const (
-	PlotKindRidgeLine string = "ridgeline"
-	PlotKindNats      string = "nats"
+	PlotKindRidgeLine           string = "ridgeline"
+	PlotKindDynamicDistribution string = "dynamic_distribution"
+	PlotKindNats                string = "nats"
 )
 
 var ridgelinePlotTemplate *template.Template
 var natsPlotTemplate *template.Template
+var dynamicDistributionPlotTemplate *template.Template
 
 type ridgelinePlotTemplateData struct {
 	Endpoint                 string
@@ -30,9 +32,18 @@ type ridgelinePlotTemplateData struct {
 	LocalStorageAuthTokenKey string
 	Symbol                   string
 }
+type dynamicDistributionPlotTemplateData struct {
+	Endpoint                 string
+	NATSURL                  string
+	PlotKind                 string
+	LocalStorageAuthTokenKey string
+	Symbol                   string
+	BasicAuthEmail           string
+	BasicAuthPassword        string
+}
 type natsPlotTemplateData struct {
 	Endpoint                 string
-	NATS_URL                 string
+	NATSURL                  string
 	PlotKind                 string
 	LocalStorageAuthTokenKey string
 	Symbol                   string
@@ -64,10 +75,25 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 				writeInternalError(s, w, err)
 				return
 			}
+		case PlotKindDynamicDistribution:
+			data := dynamicDistributionPlotTemplateData{
+				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
+				NATSURL:                  natsBrowserURL,
+				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
+				PlotKind:                 pk,
+				Symbol:                   symbol,
+			}
+			w.WriteHeader(http.StatusOK)
+			err := dynamicDistributionPlotTemplate.Execute(w, data)
+			if err != nil {
+				s.Log(int(slog.LevelError), "Error rendering template", "error", err)
+				writeInternalError(s, w, err)
+				return
+			}
 		case PlotKindNats:
 			data := natsPlotTemplateData{
 				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
-				NATS_URL:                 natsBrowserURL,
+				NATSURL:                  natsBrowserURL,
 				BasicAuthEmail:           "brojonat@gmail.com",
 				BasicAuthPassword:        os.Getenv("SECRET_KEY"),
 				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),

@@ -6,6 +6,8 @@ import {
   usernamePasswordAuthenticator,
 } from "https://cdn.jsdelivr.net/npm/nats.ws@1.10.0/esm/nats.js";
 
+// This is the main entry point for the NATS connection.
+// It is immediately called when the page loads.
 (async () => {
   try {
     // Get JWT from localStorage
@@ -25,7 +27,9 @@ import {
       const refreshResponse = await fetch(`${ENDPOINT}/token`, {
         method: "POST",
         headers: {
-          Authorization: `Basic ${btoa(`${BASIC_AUTH_EMAIL}:${BASIC_AUTH_PASSWORD}`)}`,
+          Authorization: `Basic ${btoa(
+            `${BASIC_AUTH_EMAIL}:${BASIC_AUTH_PASSWORD}`
+          )}`,
         },
       });
       if (!refreshResponse.ok) {

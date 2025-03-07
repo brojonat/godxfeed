@@ -11,6 +11,6 @@ build-cli:
 run-http-server:
 	$(call setup_env, service/.env)
 	./cli run http-server \
-		--streamer-debug \
-		--streamer-persist \
-		--streamer-publish
+		--handler-debug \
+		--handler-persist \
+		--handler-publish

@@ -5,14 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
-
-	"embed"
 
 	"github.com/brojonat/godxfeed/http/api"
 	"github.com/brojonat/godxfeed/service"
@@ -21,10 +17,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-//go:embed static
-var static embed.FS
-
 // FIXME: origins need updating
+// actually not if we're not using websockets
 // var upgrader = bwebsocket.DefaultUpgrader([]string{"http://localhost:9000", "http://localhost:9000"})
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -93,6 +87,8 @@ func RunHTTPServer(
 	// max body size, other parsing params
 	maxBytes := int64(1048576)
 
+	// subtle gotcha: if you omit this origin check, you'll get a CORS error
+	// in the browser console and it's super annoying to debug.
 	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 
 	// parse and transform the comma separated envs that configure CORS
@@ -110,14 +106,12 @@ func RunHTTPServer(
 	methods := normalizeCORSParams(ms)
 	origins := normalizeCORSParams(ogs)
 
-	ridgelinePlotTemplate = template.Must(template.ParseFS(static, "static/templates/plots/ridgeline.tmpl"))
-	natsPlotTemplate = template.Must(template.ParseFS(static, "static/templates/plots/nats.tmpl"))
-	jsFS, err := fs.Sub(static, "static")
+	// setup static file server (this will also parse the templates that are embedded in the binary)
+	staticHandler, err := setupStaticHandler()
 	if err != nil {
 		return fmt.Errorf("startup: failed to setup js static file server: %w", err)
 	}
-	fsJS := http.FileServer(http.FS(jsFS))
-	mux.Handle("GET /static/", http.StripPrefix("/static/", fsJS))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", staticHandler))
 
 	// smoke test/boot handlers
 	mux.Handle("GET /ping", stools.AdaptHandler(

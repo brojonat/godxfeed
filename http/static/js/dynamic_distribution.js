@@ -1,3 +1,11 @@
+import {
+  StringCodec,
+  connect,
+  millis,
+  tokenAuthenticator,
+  usernamePasswordAuthenticator,
+} from "https://cdn.jsdelivr.net/npm/nats.ws@1.10.0/esm/nats.js";
+
 // In an ES6 application
 
 // Example usage:
@@ -55,21 +63,54 @@ class MaxLengthQueue {
 
 // this will define a blob of data, then incrementally push the data into a queue.
 async function run() {
-  const qSize = 500;
+  const qSize = 100;
   const chartParams = setupChart(qSize);
   const data = new MaxLengthQueue(qSize);
 
   // Connect to NATS and subscribe to updates
   try {
-    const nc = await getNATS();
+    // Get JWT from localStorage
+    const token = localStorage.getItem(LSATK);
+    if (!token) {
+      throw new Error("No JWT found in localStorage");
+    }
+    // make a request to the server to check if the token is valid
+    const response = await fetch(`${ENDPOINT}/test-bearer-token`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      // refresh the token
+      const refreshResponse = await fetch(`${ENDPOINT}/token`, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${btoa(
+            `${BASIC_AUTH_EMAIL}:${BASIC_AUTH_PASSWORD}`
+          )}`,
+        },
+      });
+      if (!refreshResponse.ok) {
+        throw new Error("Failed to refresh JWT");
+      }
+      const refreshToken = await refreshResponse.json();
+      const newToken = refreshToken.token;
+      localStorage.setItem(LSATK, newToken);
+    }
+    console.log("Connecting to NATS server", NATS_URL);
+    const nc = await connect({
+      servers: [NATS_URL],
+      authenticator: tokenAuthenticator(token),
+    });
+
     const sub = nc.subscribe("godxfeed");
 
     // Process incoming messages
     for await (const msg of sub) {
       const parsed = JSON.parse(new TextDecoder().decode(msg.data));
-      data.enqueue(parsed);
+      data.enqueue({ value: parsed });
       updateChart(chartParams, data);
-      console.log("enqueued", parsed);
     }
   } catch (error) {
     console.error("NATS connection error:", error);
@@ -80,53 +121,58 @@ function setupChart(qSize) {
   const svg = d3.select("svg");
   const width = +svg.attr("width");
   const height = +svg.attr("height");
-  const margin = { top: 20, right: 20, bottom: 70, left: 40 };
+  // Adjust margins to give more space for axes and labels
+  const margin = { top: 40, right: 40, bottom: 80, left: 60 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
 
-  // Create initial scales
-  const [min, max] = [0, 10];
-  const x = d3
-    .scaleLinear()
-    .domain([min, max])
-    .range([margin.left, width - margin.right]);
-  const y = d3
-    .scaleLinear()
-    .domain([0, 1])
-    .range([height - margin.bottom, margin.top]);
+  // Clear any existing elements
+  svg.selectAll("*").remove();
 
+  // Create a group for the entire chart, translated by margins
   const g = svg
     .append("g")
     .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Create initial scales
+  const [min, max] = [75, 125];
+  const x = d3
+    .scaleLinear()
+    .domain([min, max])
+    .range([0, innerWidth]);  // Changed to use innerWidth
+
+  const y = d3
+    .scaleLinear()
+    .domain([0, 1])
+    .range([innerHeight, 0]);  // Changed to use innerHeight
 
   // Append axes
   const gx = g
     .append("g")
     .attr("class", "xaxis")
-    .attr("transform", `translate(0,${height - margin.bottom})`)
+    .attr("transform", `translate(0,${innerHeight})`)
     .call(d3.axisBottom(x));
 
-  svg
-    .append("text")
+  // X axis label
+  g.append("text")
     .attr("class", "x-label")
-    .attr("text-anchor", "end")
-    .attr("x", width - margin.right)
-    .attr("y", height - 10)
+    .attr("text-anchor", "middle")
+    .attr("x", innerWidth / 2)
+    .attr("y", innerHeight + margin.bottom - 10)
     .text("bid price (dollars)");
 
   const gy = g
     .append("g")
     .attr("class", "yaxis")
-    .attr("transform", `translate(${margin.left},0)`)
     .call(d3.axisLeft(y));
 
-  svg
-    .append("text")
+  // Y axis label
+  g.append("text")
     .attr("class", "y-label")
-    .attr("text-anchor", "end")
-    .attr("x", margin.left / 2)
-    .attr("y", margin.top)
-    .attr("transform", `rotate(-90,${margin.left / 2},${margin.top})`)
+    .attr("text-anchor", "middle")
+    .attr("transform", "rotate(-90)")
+    .attr("x", -innerHeight / 2)
+    .attr("y", -margin.left + 20)
     .text("relative frequency (counts)");
 
   return { width, height, margin, innerWidth, innerHeight, g, gx, gy };
@@ -146,7 +192,10 @@ function updateChart(chartParams, data) {
   const x = d3
     .scaleLinear()
     .domain([min, max])
-    .range([chartParams.margin.left, chartParams.margin.left + innerWidth]);
+    .range([
+      chartParams.margin.left,
+      chartParams.margin.left + chartParams.innerWidth,
+    ]);
 
   // recompute the histogram
   const histogram = d3
@@ -288,6 +337,8 @@ function updateChart(chartParams, data) {
     .attr("opacity", (d, i) => i / lastN);
 }
 
+// This is the main entry point for the dynamic distribution plot.
+// It will run the run() function when the page loads.
 document.addEventListener("DOMContentLoaded", async () => {
   try {
     await run();
