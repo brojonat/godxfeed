@@ -2,13 +2,22 @@ import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
 
 export function createMarginalHistogram(
   data,
-  { width = 200, height = 600, padding = 20, bins = 30, yDomain = null } = {}
+  {
+    width = 200,
+    height = 600,
+    margin = { top: 20, right: 20, bottom: 30, left: 40 }, // Match time series margins
+    bins = 30,
+    yDomain = null,
+    yRange = [height - margin.bottom, margin.top], // Default yRange based on height and margins
+  } = {}
 ) {
   // Create container div
   const container = document.createElement("div");
   container.style.position = "relative";
   container.style.height = "100%";
   container.style.width = "100%";
+  container.style.padding = "0";
+  container.style.margin = "0";
 
   // Create SVG
   const svg = d3
@@ -18,21 +27,12 @@ export function createMarginalHistogram(
     .attr("viewBox", [0, 0, width, height])
     .style("background", "transparent");
 
-  // Extract bid and ask prices
+  // Extract prices
   const bidPrices = data.map((d) => d.bid_price);
   const askPrices = data.map((d) => d.ask_price);
 
-  // Calculate domain with padding
-  const allPrices = [...bidPrices, ...askPrices];
-  const minPrice = Math.min(...allPrices);
-  const maxPrice = Math.max(...allPrices);
-  const pricePadding = (maxPrice - minPrice) * 0.1;
-
-  // Use provided domain if available, otherwise calculate it
-  const yScale = d3
-    .scaleLinear()
-    .domain(yDomain || [minPrice - pricePadding, maxPrice + pricePadding])
-    .range([height - padding, padding]);
+  // Use exactly the same domain and range as the line chart
+  const yScale = d3.scaleLinear().domain(yDomain).range(yRange);
 
   // Create histogram generator
   const histogram = d3
@@ -40,11 +40,11 @@ export function createMarginalHistogram(
     .domain(yScale.domain())
     .thresholds(yScale.ticks(bins));
 
-  // Generate histogram data
+  // Generate histogram data (only for bid and ask)
   const bidHistogram = histogram(bidPrices);
   const askHistogram = histogram(askPrices);
 
-  // Find max count for x scale
+  // Find max count for x scale (only using bid and ask histograms)
   const maxCount = Math.max(
     d3.max(bidHistogram, (d) => d.length),
     d3.max(askHistogram, (d) => d.length)
@@ -53,65 +53,68 @@ export function createMarginalHistogram(
   const xScale = d3
     .scaleLinear()
     .domain([0, maxCount * 1.2])
-    .range([0, width - padding * 2]);
+    .range([0, width - margin.left - margin.right]);
+
+  // Calculate means and standard deviations
+  const bidMean = d3.mean(bidPrices);
+  const askMean = d3.mean(askPrices);
+  const bidStd = d3.deviation(bidPrices);
+  const askStd = d3.deviation(askPrices);
+
+  // Generate normal distribution points with smaller step size for smoother curves
+  const normalPoints = d3.range(yScale.domain()[0], yScale.domain()[1], 0.01);
 
   // Add normal distribution curves
-  const normalLine = d3
+  const lineGenerator = d3
     .line()
     .x((d) => xScale(d.density))
-    .y((d) => yScale(d.value));
+    .y((d) => yScale(d.price))
+    .curve(d3.curveBasis);
 
-  // Generate points for bid prices normal distribution curve
-  const bidMean = d3.mean(bidPrices);
-  const bidStdDev = d3.deviation(bidPrices);
-  const bidMaxHeight = d3.max(bidHistogram, (d) => d.length);
-
-  const bidCurvePoints = d3
-    .range(minPrice - pricePadding, maxPrice + pricePadding, 0.01)
-    .map((x) => ({
-      value: x,
-      density: bidMaxHeight * Math.exp(-0.5 * ((x - bidMean) / bidStdDev) ** 2),
+  // Calculate normal distributions and scale them
+  function getNormalPoints(mean, std) {
+    const points = normalPoints.map((price) => ({
+      price,
+      density:
+        (1 / (std * Math.sqrt(2 * Math.PI))) *
+        Math.exp(-((price - mean) ** 2) / (2 * std ** 2)),
     }));
 
-  // Generate points for ask prices normal distribution curve
-  const askMean = d3.mean(askPrices);
-  const askStdDev = d3.deviation(askPrices);
-  const askMaxHeight = d3.max(askHistogram, (d) => d.length);
-
-  const askCurvePoints = d3
-    .range(minPrice - pricePadding, maxPrice + pricePadding, 0.01)
-    .map((x) => ({
-      value: x,
-      density: askMaxHeight * Math.exp(-0.5 * ((x - askMean) / askStdDev) ** 2),
+    // Scale the densities so the peak reaches maxCount
+    const maxDensity = Math.max(...points.map((p) => p.density));
+    return points.map((p) => ({
+      price: p.price,
+      density: (p.density / maxDensity) * maxCount * 1.2,
     }));
+  }
 
-  // Add the bid curve
+  // Bid normal curve
+  const bidNormalPoints = getNormalPoints(bidMean, bidStd);
   svg
     .append("path")
-    .datum(bidCurvePoints)
-    .attr("transform", `translate(${padding}, 0)`)
+    .datum(bidNormalPoints)
     .attr("fill", "none")
     .attr("stroke", "#ef4444")
-    .attr("stroke-width", 3.5)
-    .attr("opacity", 0.8)
-    .attr("d", normalLine);
+    .attr("stroke-width", 2)
+    .attr("d", lineGenerator)
+    .attr("transform", `translate(${margin.left},0)`);
 
-  // Add the ask curve
+  // Ask normal curve
+  const askNormalPoints = getNormalPoints(askMean, askStd);
   svg
     .append("path")
-    .datum(askCurvePoints)
-    .attr("transform", `translate(${padding}, 0)`)
+    .datum(askNormalPoints)
     .attr("fill", "none")
     .attr("stroke", "#22c55e")
-    .attr("stroke-width", 3.5)
-    .attr("opacity", 0.8)
-    .attr("d", normalLine);
+    .attr("stroke-width", 2)
+    .attr("d", lineGenerator)
+    .attr("transform", `translate(${margin.left},0)`);
 
   // Add mean lines
   svg
     .append("line")
-    .attr("x1", padding)
-    .attr("x2", width - padding)
+    .attr("x1", margin.left)
+    .attr("x2", width - margin.right)
     .attr("y1", yScale(bidMean))
     .attr("y2", yScale(bidMean))
     .attr("stroke", "#ef4444")
@@ -121,8 +124,8 @@ export function createMarginalHistogram(
 
   svg
     .append("line")
-    .attr("x1", padding)
-    .attr("x2", width - padding)
+    .attr("x1", margin.left)
+    .attr("x2", width - margin.right)
     .attr("y1", yScale(askMean))
     .attr("y2", yScale(askMean))
     .attr("stroke", "#22c55e")
@@ -141,8 +144,8 @@ export function createMarginalHistogram(
     .data(lastBids)
     .join("line")
     .attr("class", "vline-bid")
-    .attr("x1", padding) // Start from left padding
-    .attr("x2", padding + 40) // Extend 40px to the right
+    .attr("x1", margin.left)
+    .attr("x2", margin.left + 40)
     .attr("y1", (d) => yScale(d.bid_price))
     .attr("y2", (d) => yScale(d.bid_price))
     .attr("stroke", "#ef4444")
@@ -155,8 +158,8 @@ export function createMarginalHistogram(
     .data(lastAsks)
     .join("line")
     .attr("class", "vline-ask")
-    .attr("x1", padding) // Start from left padding
-    .attr("x2", padding + 40) // Extend 40px to the right
+    .attr("x1", margin.left)
+    .attr("x2", margin.left + 40)
     .attr("y1", (d) => yScale(d.ask_price))
     .attr("y2", (d) => yScale(d.ask_price))
     .attr("stroke", "#22c55e")
@@ -166,7 +169,7 @@ export function createMarginalHistogram(
   // Create bars for bid prices with more transparency
   svg
     .append("g")
-    .attr("transform", `translate(${padding}, 0)`)
+    .attr("transform", `translate(${margin.left}, 0)`)
     .selectAll("rect.bid")
     .data(bidHistogram)
     .join("rect")
@@ -181,7 +184,7 @@ export function createMarginalHistogram(
   // Create bars for ask prices with more transparency
   svg
     .append("g")
-    .attr("transform", `translate(${padding}, 0)`)
+    .attr("transform", `translate(${margin.left}, 0)`)
     .selectAll("rect.ask")
     .data(askHistogram)
     .join("rect")

@@ -267,11 +267,11 @@ async function runLineChart() {
     marginalPlotContainer.id = "marginal-plot";
     marginalPlotContainer.style.width = `${MARGINAL_WIDTH}px`;
     marginalPlotContainer.style.height = `${PLOT_HEIGHT}px`;
-    marginalPlotContainer.style.padding = "10px";
+    marginalPlotContainer.style.padding = "0";
     marginalPlotContainer.style.boxSizing = "border-box";
     marginalPlotContainer.style.border = "1px solid #374151";
     marginalPlotContainer.style.borderRadius = "4px";
-    marginalPlotContainer.style.backgroundColor = "#1f2937"; // Add dark background
+    marginalPlotContainer.style.backgroundColor = "#1f2937";
 
     // Add containers to the plot div
     plotDiv.appendChild(mainPlotContainer);
@@ -481,7 +481,7 @@ async function runLineChart() {
     } else {
       updatePlot(timeRangeMinutes, start);
     }
-  }, 200);
+  }, 500);
 
   // Optional: Add NATS subscription to update queue with new data
   // subscribeToNATSSymbol(nc, SYMBOL, (parsed) => {
