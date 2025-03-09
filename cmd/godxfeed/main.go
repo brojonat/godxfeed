@@ -261,17 +261,16 @@ func main() {
 								Usage:   "Logging level for the slog.Logger. Default is 0 (INFO), use -4 for DEBUG",
 								Value:   0,
 							},
+							&cli.BoolFlag{
+								Name:  "minimal-setup",
+								Usage: "Minimal setup for the HTTP server.",
+								Value: false,
+							},
 							&cli.StringFlag{
 								Name:    "database",
 								Aliases: []string{"db", "d"},
 								Usage:   "Database endpoint",
 								Value:   os.Getenv("DATABASE_URL"),
-							},
-							&cli.StringFlag{
-								Name:    "temporal-host",
-								Aliases: []string{"th", "t"},
-								Usage:   "Temporal endpoint",
-								Value:   os.Getenv("TEMPORAL_HOST"),
 							},
 							&cli.StringFlag{
 								Name:    "tastyworks-endpoint",
@@ -348,12 +347,7 @@ func main() {
 							&cli.StringFlag{
 								Name:  "symbol-method",
 								Usage: "Method to use to get symbols.",
-								Value: "n-related",
-							},
-							&cli.BoolFlag{
-								Name:  "no-symbol-handlers",
-								Usage: "Disable all symbol data handlers.",
-								Value: false,
+								Value: "",
 							},
 							&cli.BoolFlag{
 								Name:  "handler-debug",

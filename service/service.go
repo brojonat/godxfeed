@@ -378,6 +378,9 @@ func (s *service) NewStreamerToken() (*api.Response, error) {
 	return &response, nil
 }
 
+// GetSymbolData returns the symbol data for the supplied symbol and symbol type.
+// Valid symbol types are "stock", "option", "future", and "index".
+// Symbol should be an equity symbol.
 func (s *service) GetSymbolData(symbol, symbolType string) (*api.Response, error) {
 	sym := strings.ToUpper(symbol)
 	symType := strings.ToLower(symbolType)

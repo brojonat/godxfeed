@@ -105,12 +105,13 @@ func setupService(
 // large, but it's basically the entire implementation of the dxfeed handlers. Note
 // that the CLI ctx is used to configure the handlers. In the future, we can easily
 // be more dynamic with the handler selection here.
+//
+// Note that all handlers are OPT IN ONLY. Here are the supported flags:
+//
+// - handler-debug: if true, the debug handler will be added
+// - handler-persist: if true, the persist handler will be added
+// - handler-publish: if true, the publish handler will be added
 func getSymbolDataHandlers(tts service.Service, ctx *cli.Context) []func([]byte) error {
-	// if the no-stream flag is set, don't return any handlers
-	handlers := []func([]byte) error{}
-	if ctx.Bool("no-symbol-handlers") {
-		return nil
-	}
 
 	// log all the data at a debug level
 	debug := func(b []byte) error {
@@ -147,6 +148,7 @@ func getSymbolDataHandlers(tts service.Service, ctx *cli.Context) []func([]byte)
 	}
 
 	// add handlers based on the CLI context
+	handlers := []func([]byte) error{}
 	if ctx.Bool("handler-debug") {
 		handlers = append(handlers, debug)
 	}
@@ -164,7 +166,18 @@ func getSymbolDataHandlers(tts service.Service, ctx *cli.Context) []func([]byte)
 // publish to NATS) in a separate goroutine, and then finally runs the HTTP server.
 //
 // It returns an error if the service setup fails, or if the symbols cannot be
-// retrieved.
+// retrieved. It IS VALID to call this function with no symbols, in which case
+// the HTTP server will run but no data will be streamed. By default, the HTTP
+// server will run the services:
+//
+// - HTTP server
+// - Info logger
+// - NATS publisher (NATS connection is configured via the NATS_* flags)
+// - Database writer (database connection is configured via the database flag)
+//
+// You can run a minimal setup by setting the minimal-setup flag to true. This
+// will only run the HTTP server and not the other services except for the info
+// logger.
 func serve_http(ctx *cli.Context) error {
 	tts, err := setupService(
 		ctx.Context,
@@ -174,7 +187,7 @@ func serve_http(ctx *cli.Context) error {
 		ctx.String("session-token"),
 		ctx.String("dxfeed-endpoint"),
 		ctx.String("streamer-token"),
-		false,
+		ctx.Bool("minimal-setup"),
 		ctx.String("database"),
 		ctx.String("nats-url"),
 		ctx.String("nats-auth-user"),
@@ -205,7 +218,7 @@ func serve_http(ctx *cli.Context) error {
 	switch symbolMethod {
 	case "n-related":
 		if len(symbols) != 1 {
-			return fmt.Errorf("symbol-method-n-related requires exactly one symbol")
+			return fmt.Errorf("symbol method`n-related` requires exactly one symbol")
 		}
 		syms, err = tts.GetStreamSymbols(
 			symbols[0],
@@ -220,39 +233,47 @@ func serve_http(ctx *cli.Context) error {
 
 	// Get handlers that handle messages. You can configure your handlers
 	// depending on the CLI context! For example, you can configure your handlers
-	// to record data, to not record data, maybe just record some data, etc.
+	// to record data, to not record data, maybe just record some data, etc. See
+	// getSymbolDataHandlers for supported handler flags. Note that all handlers
+	// are OPT IN ONLY.
 	handlers := getSymbolDataHandlers(tts, ctx)
 
-	// If we've set symbols and handlers, then run a function that streams the
-	// symbols to the handlers we defined above. If you need to handle panic
-	// recovery or other stateful errors, you can do so here, but for now that
-	// is out of scope. Also note that for the time being, we're only handling
-	// StreamAPIFeedCompactQuoteData (since that is what the Service currently
-	// makes available); any other message types are ignored.
-	if handlers != nil {
-		go func() {
-			c, err := tts.StreamAPIFeedCompactQuoteData(ctx.Context, syms)
-			if err != nil {
-				tts.Log(int(slog.LevelError), fmt.Sprintf("error setting up streamer: %s", err.Error()))
-				return
-			}
-			// for each feed update, call each handler
-			for quotes := range c {
-				// first serialize to bytes, since that's what the handler's API
-				// expects
-				b, err := json.Marshal(quotes)
+	// if we're not in minimal setup mode, and we have handlers, then run a
+	// function that streams the symbols to the handlers we defined above.
+	// We can abstract this out into a function if we want to, but for now
+	// this is the only place we let anyone connect to the TastyWorks Streamer.
+	//
+	// If you need to handle panic recovery or other stateful errors, you can
+	// do so here, but for now that is out of scope. Also note that for the
+	// time being, we're only handling StreamAPIFeedCompactQuoteData (since
+	// that is what the Service currently makes available); any other message
+	// types are ignored.
+	if !ctx.Bool("minimal-setup") {
+		if len(handlers) > 0 {
+			go func() {
+				c, err := tts.StreamAPIFeedCompactQuoteData(ctx.Context, syms)
 				if err != nil {
-					tts.Log(int(slog.LevelError), fmt.Sprintf("error marshalling quotes: %s", err.Error()))
-					continue
+					tts.Log(int(slog.LevelError), fmt.Sprintf("error setting up streamer: %s", err.Error()))
+					return
 				}
-				// now pass the bytes to each handler
-				for _, h := range handlers {
-					if err := h(b); err != nil {
-						tts.Log(int(slog.LevelError), fmt.Sprintf("error handling symbol: %s", err.Error()))
+				// for each feed update, call each handler
+				for quotes := range c {
+					// first serialize to bytes, since that's what the handler's API
+					// expects
+					b, err := json.Marshal(quotes)
+					if err != nil {
+						tts.Log(int(slog.LevelError), fmt.Sprintf("error marshalling quotes: %s", err.Error()))
+						continue
+					}
+					// now pass the bytes to each handler
+					for _, h := range handlers {
+						if err := h(b); err != nil {
+							tts.Log(int(slog.LevelError), fmt.Sprintf("error handling symbol: %s", err.Error()))
+						}
 					}
 				}
-			}
-		}()
+			}()
+		}
 	}
 
 	// finally run the HTTP server

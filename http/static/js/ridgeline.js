@@ -1,6 +1,11 @@
 import * as Plot from "https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6/+esm";
+import { ensureValidToken } from "./auth.js";
 
-async function fetchAPI() {
+async function runRidglinePlot() {
+  const basicAuth = `Basic ${btoa(
+    `${BASIC_AUTH_EMAIL}:${BASIC_AUTH_PASSWORD}`
+  )}`;
+  const token = await ensureValidToken(ENDPOINT, LSATK, basicAuth);
   // Read the data
   let data = await d3.json(
     `${ENDPOINT}/plot-dummy-data?${new URLSearchParams({
@@ -10,7 +15,7 @@ async function fetchAPI() {
     }).toString()}`,
     {
       headers: new Headers({
-        Authorization: localStorage.getItem(LSATK),
+        Authorization: `Bearer ${token}`,
       }),
     }
   );
@@ -108,5 +113,5 @@ async function fetchAPI() {
 }
 
 // This is the main entry point for the ridgeline plot.
-// It will run the fetchAPI() function when the page loads.
-$(document).ready(async () => await fetchAPI());
+// It will run when the page loads.
+$(document).ready(async () => await runRidglinePlot());

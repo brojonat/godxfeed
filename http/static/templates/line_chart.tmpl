@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Line Chart</title>
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="/static/css/line_chart.css">
+
+    <!-- External Libraries -->
+    <script src="https://d3js.org/d3.v6.js" defer></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.slim.min.js"
+            integrity="sha256-kmHvs0B+OpCW5GVHUNjv9rOmY0IvSIRcf7zGUDTDQM8="
+            crossorigin="anonymous" defer></script>
+
+    <!-- Template Variables -->
+    <script>
+        const ENDPOINT = {{ .Endpoint }};
+        const NATS_URL = {{ .NATSURL }};
+        const LSATK = {{ .LocalStorageAuthTokenKey }};
+        const BASIC_AUTH_EMAIL = {{ .BasicAuthEmail }};
+        const BASIC_AUTH_PASSWORD = {{ .BasicAuthPassword }};
+        const SYMBOL = {{ .Symbol }};
+    </script>
+
+    <!-- Application Scripts -->
+    <script src="{{ .Endpoint }}/static/js/line_chart.js" type="module" defer></script>
+</head>
+<body>
+    <main>
+        <div id="loading">Loading a line chart...</div>
+        <div id="plot"></div>
+    </main>
+</body>
+</html>

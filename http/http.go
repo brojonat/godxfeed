@@ -73,11 +73,11 @@ func writeServiceResponse(s service.Service, w http.ResponseWriter, twr *sapi.Re
 func RunHTTPServer(
 	ctx context.Context,
 	tts service.Service,
-	addr,
-	twEndpoint,
-	twToken,
-	dxEndpoint,
-	dxToken,
+	addr string,
+	twEndpoint string,
+	twToken string,
+	dxEndpoint string,
+	dxToken string,
 	natsBrowserURL string,
 ) error {
 
@@ -166,7 +166,7 @@ func RunHTTPServer(
 		),
 	))
 
-	// data handlers
+	// tastytrade data handlers
 	mux.Handle("GET /symbol", stools.AdaptHandler(
 		handleGetSymbolData(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
@@ -182,14 +182,18 @@ func RunHTTPServer(
 		),
 	))
 
-	// plots!
+	// internal timeseries handlers
+	mux.Handle("GET /timeseries/symbol-regexp", stools.AdaptHandler(
+		handleGetSymbolRegexpTimeseriesData(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+
+	// plots
+	// example: http://localhost:8080/plots?plot_kind=line_chart&symbol=SPY
 	mux.Handle("GET /plots", stools.AdaptHandler(
 		handleGetPlots(tts, natsBrowserURL),
 		atLeastOneAuth(basicAuthorizerCtxSetEmail(getSecretKey)),
-	))
-	mux.Handle("GET /plot-dummy-data", stools.AdaptHandler(
-		handleGetPlotDummyData(tts),
-		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 
 	addr = ":" + addr
