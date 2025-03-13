@@ -1,0 +1,213 @@
+/* Base Styles */
+body {
+  background-color: #111827;
+  color: #e5e7eb;
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 0;
+  padding: 20px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #ffffff;
+}
+
+/* Options Grid Layout */
+#plots-container {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  padding: 20px;
+}
+
+.plot-row {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.option-plot {
+  flex: 1;
+  min-width: 0;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.option-plot h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #e5e7eb;
+  text-align: center;
+}
+
+/* Chart Controls */
+.chart-controls {
+  background-color: #1f2937;
+  padding: 15px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+  color: #e5e7eb;
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+  gap: 10px;
+}
+
+/* Strike preset buttons */
+.strike-presets {
+  display: flex;
+  gap: 10px;
+}
+
+.preset-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preset-label {
+  font-weight: 500;
+}
+
+.strike-presets button {
+  background-color: #374151;
+  border: 1px solid #4b5563;
+  color: #e5e7eb;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.strike-presets button:hover {
+  background-color: #4b5563;
+}
+
+.strike-presets button.active {
+  background-color: #10b981;
+  border-color: #059669;
+}
+
+/* Date picker styling */
+.datetime-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.datetime-container input[type="date"] {
+  background-color: #374151;
+  border: 1px solid #4b5563;
+  color: #e5e7eb;
+  padding: 6px;
+  border-radius: 4px;
+}
+
+/* Auto-update toggle styling */
+.auto-update-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 20px;
+  margin-right: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #374151;
+  transition: .4s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 2px;
+  bottom: 2px;
+  background-color: #e5e7eb;
+  transition: .4s;
+}
+
+input:checked + .slider {
+  background-color: #10b981;
+}
+
+input:checked + .slider:before {
+  transform: translateX(14px);
+}
+
+.slider.round {
+  border-radius: 20px;
+}
+
+.slider.round:before {
+  border-radius: 50%;
+}
+
+.toggle-label {
+  margin-left: 0;
+  font-weight: normal;
+  white-space: nowrap;
+}
+
+/* Tooltip styling */
+.plot-tooltip {
+  background-color: #1f2937;
+  color: #e5e7eb;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Loading State */
+#loading {
+  color: #9ca3af;
+  font-size: 0.9em;
+  padding: 20px;
+  text-align: center;
+}
+
+/* Auto Update Button */
+.auto-update-button {
+  margin-right: 10px;
+  padding: 5px 10px;
+  background-color: #374151;
+  border: 1px solid #4b5563;
+  border-radius: 3px;
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.auto-update-button:hover {
+  background-color: #4b5563;
+}
+
+.auto-update-button.active {
+  background-color: #10b981;
+  border-color: #059669;
+}

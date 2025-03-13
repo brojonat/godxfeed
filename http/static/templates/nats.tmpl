@@ -7,15 +7,11 @@
 
 <!-- Load template vars -->
 <script>
-const ENDPOINT = {{ .Endpoint }};
 const NATS_URL = {{ .NATSURL }};
-const LSATK = {{ .LocalStorageAuthTokenKey }};
-const BASIC_AUTH_EMAIL = {{ .BasicAuthEmail }};
-const BASIC_AUTH_PASSWORD = {{ .BasicAuthPassword }};
-const SYMBOL = {{ .Symbol }}
 </script>
 
 <!-- Create a div where the graph will take place -->
 <div id="loading">Loading...</div>
 <div id="plot"></div>
-<script src={{ .Endpoint }}/static/js/nats.js type="module"></script>
+<script type="module" src="{{ .Endpoint }}/static/js/config.js"></script>
+<script src="{{ .Endpoint }}/static/js/nats.js" type="module"></script>

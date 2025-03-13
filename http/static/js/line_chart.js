@@ -3,31 +3,14 @@ import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
 import {
   StringCodec,
   connect,
-  millis,
   tokenAuthenticator,
-  usernamePasswordAuthenticator,
 } from "https://cdn.jsdelivr.net/npm/nats.ws@1.10.0/esm/nats.js";
 import { ensureValidToken } from "./auth.js";
 import { MaxLengthQueue } from "./max_length_queue.js";
 import { createMarginalHistogram } from "./marginal_histogram.js";
-
-// perform an http request to the server to get the historical data for a
-// symbol. Note that in the future I plan to make this request return 200 and
-// start streaming the data over NATS but for now it just returns a static
-// response. The API of this function is also likely to change in the future,
-// in order for the caller to get the data in a more specific format.
-async function fetchHistoricalData(endpoint, symbol, token) {
-  const response = await fetch(
-    `${endpoint}/timeseries/symbol-regexp?symbol=${symbol}&symbolType=stock&symbol_only=true`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
-  const data = await response.json();
-  return data;
-}
+import { authenticatedFetch } from "./auth.js";
+import { AUTH_CONFIG } from "./config.js";
+import { showLoginModal } from "./modal.js";
 
 async function runLineChart() {
   const PLOT_WIDTH = 800;
@@ -35,18 +18,32 @@ async function runLineChart() {
   const MARGINAL_WIDTH = 200;
   const MAX_DATA_POINTS = 1000; // Maximum number of data points to keep
 
+  // Parse symbol from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const symbol = urlParams.get("symbol") || "SPY"; // Default to SPY if no symbol provided
+
   // Create queue for data management
   const dataQueue = new MaxLengthQueue(MAX_DATA_POINTS);
 
-  const basicAuth = `Basic ${btoa(
-    `${BASIC_AUTH_EMAIL}:${BASIC_AUTH_PASSWORD}`
-  )}`;
-  const token = await ensureValidToken(ENDPOINT, LSATK, basicAuth);
-  const data = await fetchHistoricalData(ENDPOINT, SYMBOL, token);
+  // Get token from localStorage
+  const token = localStorage.getItem(AUTH_CONFIG.tokenKey);
 
-  // filter for just spy data and convert to plot format
-  const plotData = data
-    .filter((d) => d.symbol === SYMBOL)
+  // Create NATS connection
+  const nc = await connect({
+    servers: [NATS_URL],
+    token: token,
+  });
+
+  const data = await authenticatedFetch(
+    `${AUTH_CONFIG.endpoints.timeseries}/symbol-regexp?symbol=${symbol}&symbolType=stock&symbol_only=true`
+  );
+
+  if (!data.ok) {
+    throw new Error("Failed to fetch historical data");
+  }
+
+  const plotData = (await data.json())
+    .filter((d) => d.symbol === symbol)
     .map((d) => ({
       ts: new Date(d.ts),
       bid_price: d.bid_price,
@@ -89,13 +86,43 @@ async function runLineChart() {
       <input type="datetime-local" id="endTime" step="1">
     </div>
     <div class="auto-update-control">
-      <label class="auto-update-label">
+      <label class="switch">
         <input type="checkbox" id="autoUpdateToggle">
-        Auto-update range
+        <span class="slider round"></span>
+        <span class="toggle-label">Auto-update range</span>
       </label>
     </div>
   `;
+
+  // Create quote info container
+  const quoteInfoContainer = document.createElement("div");
+  quoteInfoContainer.className = "quote-info-container";
+  quoteInfoContainer.innerHTML = `
+    <div class="quote-info">
+      <div class="price-display">
+        <div class="price-row horizontal">
+          <div class="price-group">
+            <span class="price-label">Bid</span>
+            <span class="price bid-price">-</span>
+            <span class="size bid-size">-</span>
+          </div>
+          <div class="price-group">
+            <span class="price-label">Mid</span>
+            <span class="price mid-price">-</span>
+          </div>
+          <div class="price-group">
+            <span class="price-label">Ask</span>
+            <span class="price ask-price">-</span>
+            <span class="size ask-size">-</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Add both containers before the plot
   document.querySelector("#plot").before(controlsContainer);
+  document.querySelector("#plot").before(quoteInfoContainer);
 
   let isDragging = false;
   let dragStart = null;
@@ -299,6 +326,11 @@ async function runLineChart() {
     mainPlotContainer.addEventListener("mousedown", (e) => {
       isDragging = true;
       dragStart = { x: e.clientX, time: currentViewStart };
+
+      // Turn off auto-update when user starts dragging
+      const autoUpdateToggle = document.querySelector("#autoUpdateToggle");
+      autoUpdateToggle.checked = false;
+      isAutoUpdateEnabled = false;
     });
 
     currentViewStart = windowStart;
@@ -441,59 +473,168 @@ async function runLineChart() {
   $("#loading").toggle();
 
   // Add auto-update toggle to controls container
-  const autoUpdateDiv = document.querySelector(".auto-update-control");
   const autoUpdateToggle = document.querySelector("#autoUpdateToggle");
 
   // Initialize auto-update state
-  let isAutoUpdateEnabled = false;
+  let isAutoUpdateEnabled = autoUpdateToggle.checked;
   autoUpdateToggle.addEventListener("change", (e) => {
     isAutoUpdateEnabled = e.target.checked;
   });
 
-  setInterval(() => {
-    const midNormal = d3.randomNormal.source(d3.randomLcg(Date.now()))(
-      150,
-      0.5
-    );
-    const mid = midNormal();
-    const halfNormal = d3.randomNormal.source(d3.randomLcg(Date.now()))(0, 0.1);
-    const variation = Math.abs(halfNormal());
+  // DEBUGGING: for debugging purposes, push random data into the queue
+  const debug = true;
+  if (debug) {
+    setInterval(() => {
+      const midNormal = d3.randomNormal.source(d3.randomLcg(Date.now()))(
+        150,
+        0.5
+      );
+      const mid = midNormal();
+      const halfNormal = d3.randomNormal.source(d3.randomLcg(Date.now()))(
+        0,
+        0.1
+      );
+      const variation = Math.abs(halfNormal());
+      const newPoint = {
+        ts: new Date(),
+        bid_price: mid - variation,
+        bid_size: 100 + Math.random() * 100,
+        ask_price: mid + variation,
+        ask_size: 100 + Math.random() * 100,
+      };
+      dataQueue.enqueue(newPoint);
+      // Calculate current time range from datetime pickers
+      const start = new Date(startTimePicker.value);
+      const end = new Date(endTimePicker.value);
+      const timeRangeMinutes = (end - start) / (60 * 1000);
+      // Update quote info display
+      document.querySelector(".bid-price").textContent =
+        newPoint.bid_price.toFixed(2);
+      document.querySelector(".ask-price").textContent =
+        newPoint.ask_price.toFixed(2);
+      document.querySelector(".mid-price").textContent = (
+        (newPoint.bid_price + newPoint.ask_price) /
+        2
+      ).toFixed(2);
+      document.querySelector(".bid-size").textContent =
+        Math.round(newPoint.bid_size) || "-";
+      document.querySelector(".ask-size").textContent =
+        Math.round(newPoint.ask_size) || "-";
+      if (isAutoUpdateEnabled) {
+        const now = new Date();
+        const newStart = new Date(now - timeRangeMinutes * 60 * 1000);
+        startTimePicker.value = newStart.toISOString().slice(0, 19);
+        endTimePicker.value = now.toISOString().slice(0, 19);
+        updatePlot(timeRangeMinutes, newStart);
+      }
+    }, 200);
+  }
 
-    const newPoint = {
-      ts: new Date(),
-      bid_price: mid - variation,
-      ask_price: mid + variation,
-    };
-    dataQueue.enqueue(newPoint);
-
-    // Calculate current time range from datetime pickers
-    const start = new Date(startTimePicker.value);
-    const end = new Date(endTimePicker.value);
-    const timeRangeMinutes = (end - start) / (60 * 1000);
-
-    // If auto-update is enabled, adjust the time window to follow the latest data
-    if (isAutoUpdateEnabled) {
-      const now = new Date();
-      const newStart = new Date(now - timeRangeMinutes * 60 * 1000);
-      startTimePicker.value = newStart.toISOString().slice(0, 19);
-      endTimePicker.value = now.toISOString().slice(0, 19);
-      updatePlot(timeRangeMinutes, newStart);
-    } else {
-      updatePlot(timeRangeMinutes, start);
+  // Request the server to start streaming data for this symbol
+  const response = await authenticatedFetch(
+    `${AUTH_CONFIG.endpoints.stream}?symbol=${symbol}`,
+    null,
+    {
+      method: "POST",
     }
-  }, 500);
+  );
 
-  // Optional: Add NATS subscription to update queue with new data
-  // subscribeToNATSSymbol(nc, SYMBOL, (parsed) => {
-  //   dataQueue.enqueue({
-  //     ts: new Date(parsed.ts),
-  //     bid_price: parsed.bid_price,
-  //     ask_price: parsed.ask_price
-  //   });
-  //   updatePlot(/* current time range */);
-  // });
+  if (!response.ok) {
+    throw new Error("Failed to request historical data stream");
+  }
+  const d = await response.json();
+  const streamSubject = d.subject;
+
+  // Subscribe to the stream
+  try {
+    const sub = nc.subscribe(`godxfeed.${streamSubject}`);
+    const decoder = new StringCodec();
+    for await (const msg of sub) {
+      const data = JSON.parse(decoder.decode(msg.data));
+      dataQueue.enqueue({
+        ts: new Date(data.ts),
+        bid_price: data.bid_price,
+        ask_price: data.ask_price,
+      });
+
+      // Update quote info display
+      document.querySelector(".bid-price").textContent =
+        data.bid_price.toFixed(2);
+      document.querySelector(".ask-price").textContent =
+        data.ask_price.toFixed(2);
+      document.querySelector(".mid-price").textContent = (
+        (data.bid_price + data.ask_price) /
+        2
+      ).toFixed(2);
+      document.querySelector(".bid-size").textContent =
+        Math.round(data.bid_size) || "-";
+      document.querySelector(".ask-size").textContent =
+        Math.round(data.ask_size) || "-";
+
+      // Calculate current time range from datetime pickers
+      const start = new Date(startTimePicker.value);
+      const end = new Date(endTimePicker.value);
+      const timeRangeMinutes = (end - start) / (60 * 1000);
+
+      // If auto-update is enabled, adjust the time window to follow the latest data
+      if (isAutoUpdateEnabled) {
+        const now = new Date();
+        const newStart = new Date(now - timeRangeMinutes * 60 * 1000);
+        startTimePicker.value = newStart.toISOString().slice(0, 19);
+        endTimePicker.value = now.toISOString().slice(0, 19);
+        updatePlot(timeRangeMinutes, newStart);
+      }
+    }
+  } catch (error) {
+    console.error("Error in NATS subscription:", error);
+    // Maybe show an error to the user or try to reconnect
+  }
 }
 
 // This is the main entry point for the line chart plot.
 // It will run when the page loads.
-$(document).ready(async () => await runLineChart());
+$(document).ready(async () => {
+  // Check if token exists in localStorage
+  let token = localStorage.getItem(AUTH_CONFIG.tokenKey);
+
+  // Check if token is in URL parameters
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get("token");
+
+  // If token is in URL, save it to localStorage and remove from URL
+  if (urlToken) {
+    localStorage.setItem(AUTH_CONFIG.tokenKey, urlToken);
+    token = urlToken;
+
+    // Remove token from URL without refreshing the page
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.delete("token");
+    window.history.replaceState({}, document.title, newUrl.toString());
+  }
+
+  if (!token) {
+    // No token found, show login modal
+    showLoginModal(runLineChart);
+  } else {
+    // Token exists, verify it
+    try {
+      const response = await authenticatedFetch(
+        AUTH_CONFIG.endpoints.testToken
+      );
+
+      if (!response.ok) {
+        // Token is invalid, show login modal
+        throw new Error("Invalid token");
+      }
+
+      // Token is valid, run the line chart
+      runLineChart();
+    } catch (error) {
+      console.error("Token validation error:", error);
+      // Clear invalid token
+      localStorage.removeItem(AUTH_CONFIG.tokenKey);
+      // Show login modal
+      showLoginModal(runLineChart);
+    }
+  }
+});

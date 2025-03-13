@@ -15,12 +15,14 @@ const (
 	PlotKindDynamicDistribution string = "dynamic_distribution"
 	PlotKindNats                string = "nats"
 	PlotKindLineChart           string = "line_chart"
+	PlotKindOptionsGrid         string = "options_grid"
 )
 
 var ridgelinePlotTemplate *template.Template
 var natsPlotTemplate *template.Template
 var dynamicDistributionPlotTemplate *template.Template
 var lineChartPlotTemplate *template.Template
+var optionsGridTemplate *template.Template
 
 type ridgelinePlotTemplateData struct {
 	Endpoint                 string
@@ -52,6 +54,21 @@ type lineChartPlotTemplateData struct {
 	PlotKind                 string
 	LocalStorageAuthTokenKey string
 	Symbol                   string
+	BasicAuthEmail           string
+	BasicAuthPassword        string
+}
+type optionsGridTemplateData struct {
+	Endpoint                 string
+	PlotKind                 string
+	LocalStorageAuthTokenKey string
+	Symbol                   string
+	BasicAuthEmail           string
+	BasicAuthPassword        string
+}
+
+type indexTemplateData struct {
+	Endpoint                 string
+	LocalStorageAuthTokenKey string
 	BasicAuthEmail           string
 	BasicAuthPassword        string
 }
@@ -129,10 +146,44 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 				writeInternalError(s, w, err)
 				return
 			}
+		case PlotKindOptionsGrid:
+			data := optionsGridTemplateData{
+				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
+				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
+				PlotKind:                 pk,
+				Symbol:                   symbol,
+				BasicAuthEmail:           "brojonat@gmail.com",
+				BasicAuthPassword:        os.Getenv("SECRET_KEY"),
+			}
+			w.WriteHeader(http.StatusOK)
+			err := optionsGridTemplate.Execute(w, data)
+			if err != nil {
+				s.Log(int(slog.LevelError), "Error rendering template", "error", err)
+				writeInternalError(s, w, err)
+				return
+			}
 		default:
 			writeBadRequestError(w, fmt.Errorf("unsupported plot_kind %s", pk))
 			return
 		}
 
+	}
+}
+
+func handleIndex() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data := indexTemplateData{
+			Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
+			LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
+			BasicAuthEmail:           "brojonat@gmail.com",
+			BasicAuthPassword:        os.Getenv("SECRET_KEY"),
+		}
+
+		w.WriteHeader(http.StatusOK)
+		err := indexTemplate.Execute(w, data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 }

@@ -8,9 +8,14 @@ build-cli:
 	$(call setup_env, service/.env)
 	go build -o cli cmd/godxfeed/*.go
 
+refresh-env:
+	$(call setup_env, service/.env)
+	./cli admin get-session-token -u "$$TW_USERNAME" -p "$$TW_PASSWORD" --env-path service/.env
+	./cli admin get-streamer-token --env-path service/.env
+
 run-http-server:
 	$(call setup_env, service/.env)
 	./cli run http-server \
-		--handler-debug \
-		--handler-persist \
-		--handler-publish
+		--symbol SPY \
+		--symbol-method n-related \
+		--handler-persist

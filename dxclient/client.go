@@ -28,6 +28,14 @@ func (e ErrBadToken) Error() string {
 	return e.Message
 }
 
+type ErrAlreadySubscribed struct {
+	Message string `json:"message"`
+}
+
+func (e ErrAlreadySubscribed) Error() string {
+	return e.Message
+}
+
 type Client interface {
 	// Dial sets up the websocket connection to the dxlink service
 	Dial(context.Context, string, func(MessageSetup) error) error
@@ -152,32 +160,47 @@ func (c *client) Authenticate(token string) error {
 }
 
 // Returns an error indicating whether channel subscription successful or not.
-func (c *client) openChannel(m MessageChannelRequest) error {
+// This is thread safe.
+func (c *client) Subscribe(syms []string) error {
+	c.lock.Lock()
+	cid := c.getNextChanID()
+
+	// Create channels before releasing lock to ensure proper ordering
 	done := make(chan error)
-	hid := fmt.Sprintf("_onChannelRequest-%s", uuid.New())
-	c.addMessageHandler(hid, func(m Message) {
-		_, ok := m.(MessageChannelOpened)
+	hid := fmt.Sprintf("_onFeedSetup-%s", uuid.New())
+	setupHandler := func(m Message) {
+		_, ok := m.(MessageFeedConfig)
 		if !ok {
 			return
 		}
+		// I don't think there's anything useful in feed message, so we don't
+		// need to do anything with it, we can just remove the handler itself and then
+		// send a nil error on the done channel
 		c.removeMessageHandler(hid)
-		c.Log(int(slog.LevelDebug), "completed channel open")
-		done <- nil
-	})
-	c.Send(m)
-	return <-done
-}
+		c.Log(int(slog.LevelDebug), "completed feed setup")
+		select {
+		case done <- nil:
+		default:
+			// Handle case where done channel is already closed
+			c.Log(int(slog.LevelError), "done channel closed before sending completion")
+		}
+	}
+	c.handlers[hid] = setupHandler
+	c.lock.Unlock()
 
-func (c *client) getNextChanID() int {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.maxChannelID += 1
-	return c.maxChannelID
-}
+	// Add timeout handling in case the server never sends a feed setup message
+	go func() {
+		timer := time.NewTimer(30 * time.Second) // Adjust timeout as needed, but 30 seconds is a good default
+		defer timer.Stop()
+		<-timer.C
+		c.removeMessageHandler(hid)
+		select {
+		case done <- fmt.Errorf("timeout waiting for feed setup"):
+		default:
+			c.Log(int(slog.LevelInfo), "done channel closed before sending timeout error (expected)")
+		}
+	}()
 
-// Returns an error indicating whether channel subscription successful or not.
-func (c *client) Subscribe(syms []string) error {
-	cid := c.getNextChanID()
 	if err := c.openChannel(MessageChannelRequest{
 		MessageBase: MessageBase{Type: MESSAGE_TYPE_CHANNEL_REQUEST, Channel: cid},
 		Service:     CHANNEL_SERVICE_FEED,
@@ -186,18 +209,6 @@ func (c *client) Subscribe(syms []string) error {
 		return err
 	}
 
-	done := make(chan error)
-
-	hid := fmt.Sprintf("_onFeedSetup-%s", uuid.New())
-	c.addMessageHandler(hid, func(m Message) {
-		_, ok := m.(MessageFeedConfig)
-		if !ok {
-			return
-		}
-		c.removeMessageHandler(hid)
-		c.Log(int(slog.LevelDebug), "completed feed setup")
-		done <- nil
-	})
 	c.Send(MessageFeedSetup{
 		MessageBase:             MessageBase{Type: MESSAGE_TYPE_FEED_SETUP, Channel: cid},
 		AcceptAggregationPeriod: 1.0,
@@ -208,8 +219,9 @@ func (c *client) Subscribe(syms []string) error {
 		return err
 	}
 
+	c.lock.Lock()
 	hid = fmt.Sprintf("_onFeedSubscription-%s", uuid.New())
-	c.addMessageHandler(hid, func(m Message) {
+	subHandler := func(m Message) {
 		_, ok := m.(MessageFeedConfig)
 		if !ok {
 			return
@@ -217,7 +229,9 @@ func (c *client) Subscribe(syms []string) error {
 		c.removeMessageHandler(hid)
 		c.Log(int(slog.LevelDebug), "completed feed subscription")
 		done <- nil
-	})
+	}
+	c.handlers[hid] = subHandler
+	c.lock.Unlock()
 
 	// FIXME: chunk this into 50ish symbols at a time
 	subs := []FeedRegularSubscription{}
@@ -234,6 +248,12 @@ func (c *client) Subscribe(syms []string) error {
 	return <-done
 }
 
+// C returns a channel of messages that are sent to the client.
+// The second return value is a string that is the ID of the handler that
+// is used to remove the handler from the client. Note that many clients
+// can subscribe to the same channel and not interfere with each other
+// because each client gets its own unique message handler responsible
+// for writing to the channel.
 func (c *client) C() (<-chan Message, string) {
 	out := make(chan Message)
 	hid := fmt.Sprintf("streamer-%s", uuid.New())
@@ -464,4 +484,38 @@ func (c *client) Log(level int, s string, args ...any) {
 // Wait blocks until the client is done reading/writing
 func (c *client) Wait() {
 	c.wg.Wait()
+}
+
+func (c *client) getNextChanID() int {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.maxChannelID += 1
+	return c.maxChannelID
+}
+
+func (c *client) openChannel(req MessageChannelRequest) error {
+	done := make(chan error)
+
+	c.lock.Lock()
+	hid := fmt.Sprintf("_onChannelOpen-%s", uuid.New())
+	openHandler := func(m Message) {
+		msg, ok := m.(MessageChannelOpened)
+		if !ok {
+			return
+		}
+		if msg.Channel != req.Channel {
+			return
+		}
+		c.removeMessageHandler(hid)
+		c.Log(int(slog.LevelDebug), "channel opened", "channel", msg.Channel)
+		done <- nil
+	}
+	c.handlers[hid] = openHandler
+	c.lock.Unlock()
+
+	if err := c.Send(req); err != nil {
+		return fmt.Errorf("failed to send channel request: %w", err)
+	}
+
+	return <-done
 }

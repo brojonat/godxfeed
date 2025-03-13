@@ -56,7 +56,6 @@ func basicAuthorizerCtxSetEmail(gsk func() string) func(http.ResponseWriter, *ht
 
 func bearerAuthorizerCtxSetToken(gsk func() string) func(http.ResponseWriter, *http.Request) bool {
 	return func(w http.ResponseWriter, r *http.Request) bool {
-		var claims authJWTClaims
 		ts := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if ts == "" {
 			return false
@@ -64,7 +63,28 @@ func bearerAuthorizerCtxSetToken(gsk func() string) func(http.ResponseWriter, *h
 		kf := func(token *jwt.Token) (interface{}, error) {
 			return []byte(gsk()), nil
 		}
+		var claims authJWTClaims
 		token, err := jwt.ParseWithClaims(ts, &claims, kf)
+		if err != nil || !token.Valid {
+			return false
+		}
+		ctx := context.WithValue(r.Context(), ctxKeyJWT, token.Claims)
+		*r = *r.WithContext(ctx)
+		return true
+	}
+}
+
+func queryAuthorizerCtxSetEmail(gsk func() string) func(http.ResponseWriter, *http.Request) bool {
+	return func(w http.ResponseWriter, r *http.Request) bool {
+		query := r.URL.Query().Get("token")
+		if query == "" {
+			return false
+		}
+		kf := func(token *jwt.Token) (interface{}, error) {
+			return []byte(gsk()), nil
+		}
+		var claims authJWTClaims
+		token, err := jwt.ParseWithClaims(query, &claims, kf)
 		if err != nil || !token.Valid {
 			return false
 		}
@@ -88,6 +108,23 @@ func atLeastOneAuth(authorizers ...func(http.ResponseWriter, *http.Request) bool
 			}
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(api.DefaultJSONResponse{Error: "unauthorized"})
+		}
+	}
+}
+
+// Redirects to index page if authentication fails
+func redirectToIndexOnAuthFailure(authorizers ...func(http.ResponseWriter, *http.Request) bool) stools.HandlerAdapter {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			for _, a := range authorizers {
+				if !a(w, r) {
+					continue
+				}
+				next(w, r)
+				return
+			}
+			// If authentication failed, redirect to index page
+			http.Redirect(w, r, "/", http.StatusSeeOther)
 		}
 	}
 }

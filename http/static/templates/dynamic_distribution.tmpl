@@ -46,17 +46,11 @@
     </style>
 
     <script>
-      const ENDPOINT = "{{ .Endpoint }}";
       const NATS_URL = "{{ .NATSURL }}";
-      const BASIC_AUTH_EMAIL = "{{ .BasicAuthEmail }}";
-      const BASIC_AUTH_PASSWORD = "{{ .BasicAuthPassword }}";
-      const LSATK = "{{ .LocalStorageAuthTokenKey }}";
-      const SYMBOL = "{{ .Symbol }}";
     </script>
-
+    <script type="module" src="{{ .Endpoint }}/static/js/dynamic_distribution.js"></script>
   </head>
   <body>
     <svg width="600" height="400"></svg>
-    <script type="module" src="{{ .Endpoint }}/static/js/dynamic_distribution.js"></script>
   </body>
 </html>

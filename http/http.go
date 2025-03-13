@@ -189,11 +189,22 @@ func RunHTTPServer(
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 
+	// NATS streaming endpoint
+	mux.Handle("POST /stream", stools.AdaptHandler(
+		handleNATSStream(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+
 	// plots
-	// example: http://localhost:8080/plots?plot_kind=line_chart&symbol=SPY
 	mux.Handle("GET /plots", stools.AdaptHandler(
 		handleGetPlots(tts, natsBrowserURL),
-		atLeastOneAuth(basicAuthorizerCtxSetEmail(getSecretKey)),
+		redirectToIndexOnAuthFailure(queryAuthorizerCtxSetEmail(getSecretKey)),
+	))
+
+	// Add this near the other route handlers in RunHTTPServer
+	mux.Handle("GET /", stools.AdaptHandler(
+		handleIndex(),
 	))
 
 	addr = ":" + addr

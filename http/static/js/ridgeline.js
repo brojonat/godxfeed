@@ -1,11 +1,9 @@
 import * as Plot from "https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6/+esm";
 import { ensureValidToken } from "./auth.js";
+import { AUTH_CONFIG } from "./config.js";
 
 async function runRidglinePlot() {
-  const basicAuth = `Basic ${btoa(
-    `${BASIC_AUTH_EMAIL}:${BASIC_AUTH_PASSWORD}`
-  )}`;
-  const token = await ensureValidToken(ENDPOINT, LSATK, basicAuth);
+  const token = await ensureValidToken(ENDPOINT);
   // Read the data
   let data = await d3.json(
     `${ENDPOINT}/plot-dummy-data?${new URLSearchParams({

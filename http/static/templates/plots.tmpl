@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/plots.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div id="loading">Loading...</div>
+    <div id="plot"></div>
+
+    <script>
+        const SYMBOL = "{{.Symbol}}";
+        const NATS_URL = "{{.NatsURL}}";
+    </script>
+    <script type="module" src="{{ .Endpoint }}/static/js/config.js"></script>
+    <script type="module" src="{{ .Endpoint }}/static/js/{{.ScriptName}}.js"></script>
+</body>
+</html>

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	dx "github.com/brojonat/godxfeed/dxclient"
@@ -96,10 +97,22 @@ type Service interface {
 	// streaming API.
 	StreamAPIFeedCompactQuoteData(ctx context.Context, syms []string) (<-chan []api.FeedCompactQuote, error)
 
+	// StreamHistoricalSymbolData writes the historical data for the provided symbol to
+	// NATS.
+	StreamHistoricalSymbolData(ctx context.Context, symbol string) error
+
 	// RecordSymbolData writes the symbol data to the database.
 	RecordSymbolData(data []byte) (int64, error)
 	// PublishSymbolData publishes the symbol data to NATS.
 	PublishSymbolData(data []byte) error
+
+	// StopSymbolStream stops streaming for the provided symbol.
+	StopSymbolStream(symbol string)
+	// StopAllStreams stops all streams.
+	StopAllStreams()
+
+	// IsSymbolStreamActive returns true if the symbol is currently being streamed
+	IsSymbolStreamActive(symbol string) bool
 }
 
 // SymbolMethodNRelatedOptions returns a callback that fetches the first n
@@ -140,6 +153,16 @@ type service struct {
 	dbpool        *pgxpool.Pool
 	dbqueries     *dbgen.Queries
 	nats          *nats.Conn
+
+	// Add mutex to protect the streams map
+	streamsMu sync.RWMutex
+	// Map of symbol to cancel function for active streams
+	streams map[string]context.CancelFunc
+
+	// Add dx client fields
+	dxClientMu sync.RWMutex
+	dxClient   dx.Client
+	dxChan     <-chan dx.Message
 }
 
 func NewService(
@@ -163,6 +186,7 @@ func NewService(
 		dbpool:        p,
 		dbqueries:     q,
 		nats:          nc,
+		streams:       make(map[string]context.CancelFunc),
 	}
 	return s
 }
@@ -507,53 +531,77 @@ func (s *service) GetStreamSymbols(symbol string, getRelateds func(string) ([]st
 
 // StreamAPIFeedCompactQuoteData connects to the DXLink websocket endpoint,
 // authenticates, and subscribes to the supplied symbols for quote data. It
-// returns a channel and an error. Any messages that the DXLink server sends are
-// sent down the returned channel. Consumers can range over the channel; it will
-// be closed when done reading data. NOTE: every call to StreamSymbols creates a
-// new client that connects to the DXLink endpoint; this should only be called
-// ONCE PER SERVICE INSTANCE. The service can write the data to a database and
-// then we can serve the aggregate data to any number of clients
+// returns a channel and an error. Consumers can range over the channel; it will
+// be closed when done reading data. All calls to this method use the same
+// underlying dxlink client, but each call makes a subscription call to the
+// dxlink server and creates a new channel to receive messages.
 func (s *service) StreamAPIFeedCompactQuoteData(ctx context.Context, syms []string) (<-chan []api.FeedCompactQuote, error) {
-	cl := func(level int, msg string, args ...any) {
-		s.Log(level, msg, args...)
-	}
-	client := dx.NewClient(cl)
-	c, _ := client.C()
-	out := make(chan []api.FeedCompactQuote)
-	// in a separate goroutine, filter the FEED_DATA messages and send them
-	// down the streaming channel
-	go func() {
-		defer close(out)
-		for msg := range c {
-			feeds, err := FilterAPIFeedCompactQuoteData(msg)
-			if err != nil {
-				s.Log(int(slog.LevelError), "error filtering feed data: %v", err)
-				continue
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case out <- feeds:
-			}
+	// Initialize dx client if not already done
+	s.dxClientMu.Lock()
+	if s.dxClient == nil {
+		cl := func(level int, msg string, args ...any) {
+			s.Log(level, msg, args...)
 		}
-	}()
+		s.dxClient = dx.NewClient(cl)
+		dc, handlerID := s.dxClient.C()
+		s.dxChan = dc
+		s.logger.Info("dx client channel", "handlerID", handlerID)
 
-	fmt.Println("dialing dxlink", s.dxEndpoint)
-	err := client.Dial(ctx, fmt.Sprintf("wss://%s", s.dxEndpoint), func(msg dx.MessageSetup) error {
-		fmt.Println("msg", msg)
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("could not dial dxlink: %w", err)
+		fmt.Println("dialing dxlink", s.dxEndpoint)
+		err := s.dxClient.Dial(ctx, fmt.Sprintf("wss://%s", s.dxEndpoint), func(msg dx.MessageSetup) error {
+			fmt.Println("msg", msg)
+			return nil
+		})
+		if err != nil {
+			s.dxClientMu.Unlock()
+			return nil, fmt.Errorf("could not dial dxlink: %w", err)
+		}
+		err = s.dxClient.Authenticate(s.streamerToken)
+		if err != nil {
+			s.dxClientMu.Unlock()
+			return nil, fmt.Errorf("could not authenticate: %w", err)
+		}
 	}
-	err = client.Authenticate(s.streamerToken)
-	if err != nil {
-		return nil, fmt.Errorf("could not authenticate: %w", err)
-	}
-	err = client.Subscribe(syms)
+	s.dxClientMu.Unlock()
+
+	// Subscribe to symbols. I *THINK* that the dxlink server symbol subscriptions
+	// are idempotent, so we don't need to handle that here. At some point we do
+	// need to handle the case where the server rejects a subscription (e.g.,
+	// too many subscriptions).
+	err := s.dxClient.Subscribe(syms)
 	if err != nil {
 		return nil, fmt.Errorf("could not subscribe to symbols: %w", err)
 	}
+
+	// Get a new stream of feed messages (this is every message from the dxlink server
+	// for all subscriptions handled by this service instance). Then, in a separate
+	// goroutine, filter the FEED_DATA messages and send them down the streaming
+	// channel returned to the caller.
+	feed, _ := s.dxClient.C()
+	out := make(chan []api.FeedCompactQuote)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-feed:
+				if !ok {
+					return
+				}
+				feeds, err := FilterAPIFeedCompactQuoteData(msg)
+				if err != nil {
+					s.Log(int(slog.LevelError), "error filtering feed data: %v", err)
+					continue
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case out <- feeds:
+				}
+			}
+		}
+	}()
 
 	return out, nil
 }
@@ -599,4 +647,125 @@ func FilterAPIFeedCompactQuoteData(msg dx.Message) ([]api.FeedCompactQuote, erro
 		})
 	}
 	return res, nil
+}
+
+// StreamHistoricalSymbolData writes the historical data for the provided symbol to
+// NATS.
+func (s *service) StreamHistoricalSymbolData(ctx context.Context, symbol string) error {
+
+	// stream the historical data over NATS in a goroutine
+	go func() {
+
+		// first write all the preexisting historical data for this symbol to
+		// the channel
+		rows, err := s.DBQ().GetSymbolDataRaw(ctx, dbgen.GetSymbolDataRawParams{
+			Symregexp: symbol,
+			TsStart:   pgtype.Timestamptz{Time: time.Now().Add(-time.Hour * 24), Valid: true},
+			TsEnd:     pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		})
+		if err != nil {
+			s.Log(int(slog.LevelError), "Failed to get historical data", "symbol", symbol, "error", err)
+			return
+		}
+
+		histData := []api.FeedCompactQuote{}
+		for _, row := range rows {
+			histData = append(histData, api.FeedCompactQuote{
+				FeedCompactQuote: dx.FeedCompactQuote{
+					AskPrice:    float64(row.AskPrice),
+					AskSize:     float64(row.AskSize),
+					BidPrice:    float64(row.BidPrice),
+					BidSize:     float64(row.BidSize),
+					EventSymbol: row.Symbol,
+					EventType:   "QUOTE",
+				},
+			})
+		}
+
+		b, err := json.Marshal(histData)
+		if err != nil {
+			s.Log(int(slog.LevelError), "Failed to marshal historical data", "symbol", symbol, "error", err)
+		}
+		// maybe clear the stream?
+		s.PublishSymbolData(b)
+	}()
+
+	return nil
+}
+
+// StartSymbolStream starts a new stream for the given symbol.
+// It returns an error if the stream cannot be started (in the future
+// I expect this will happen because we'll saturate our TastyTrade API
+// symbol subscription limit, but at that point we can just return a
+// response that tells the client to try again later (and maybe they'll
+// get a server that can handle more symbol subscriptions). Note that because
+// this publishes symbol data to the NATS server, it should only be called
+// once per symbol, so if have some other publisher publishing on the same
+// symbol, you may encounter unexpected behavior.
+func (s *service) StartSymbolStream(symbol string) error {
+	s.streamsMu.Lock()
+	defer s.streamsMu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	s.streams[symbol] = cancel
+
+	// start the stream in a goroutine
+	go func() {
+		defer s.StopSymbolStream(symbol)
+
+		// get a feed channel and stream it
+		feeds, err := s.StreamAPIFeedCompactQuoteData(ctx, []string{symbol})
+		if err != nil {
+			s.Log(int(slog.LevelError), "Failed to start symbol stream", "symbol", symbol, "error", err)
+			return
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case feed, ok := <-feeds:
+				if !ok {
+					return
+				}
+				b, err := json.Marshal(feed)
+				if err != nil {
+					s.Log(int(slog.LevelError), "Failed to marshal feed", "symbol", symbol, "error", err)
+					continue
+				}
+				s.PublishSymbolData(b)
+			}
+		}
+	}()
+	return nil
+}
+
+// Add a method to stop streaming a symbol. If the symbol is not being streamed,
+// this method is a no-op.
+func (s *service) StopSymbolStream(symbol string) {
+	s.streamsMu.Lock()
+	defer s.streamsMu.Unlock()
+
+	if cancel, exists := s.streams[symbol]; exists {
+		cancel() // Cancel the context
+		delete(s.streams, symbol)
+	}
+}
+
+// Add a method to stop all streams
+func (s *service) StopAllStreams() {
+	s.streamsMu.Lock()
+	defer s.streamsMu.Unlock()
+
+	for symbol, cancel := range s.streams {
+		cancel()
+		delete(s.streams, symbol)
+	}
+}
+
+// IsSymbolStreamActive returns true if the symbol is currently being streamed
+func (s *service) IsSymbolStreamActive(symbol string) bool {
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
+	_, exists := s.streams[symbol]
+	return exists
 }

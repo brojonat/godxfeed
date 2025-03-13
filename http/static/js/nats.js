@@ -10,10 +10,7 @@ import { ensureValidToken } from "./auth.js";
 // This is the main entry point for the NATS connection.
 // It is immediately called when the page loads.
 async function runNATSConnection() {
-  const basicAuth = `Basic ${btoa(
-    `${BASIC_AUTH_EMAIL}:${BASIC_AUTH_PASSWORD}`
-  )}`;
-  const token = await ensureValidToken(ENDPOINT, LSATK, basicAuth);
+  const token = await ensureValidToken(ENDPOINT);
 
   console.log("Connected to NATS server");
   const sub = nc.subscribe("godxfeed");

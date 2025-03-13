@@ -5,8 +5,10 @@ import {
   tokenAuthenticator,
   usernamePasswordAuthenticator,
 } from "https://cdn.jsdelivr.net/npm/nats.ws@1.10.0/esm/nats.js";
-import { validateToken, refreshToken } from "./auth.js";
+import { ensureValidToken, authenticatedFetch } from "./auth.js";
 import { MaxLengthQueue } from "./max_length_queue.js";
+import { AUTH_CONFIG } from "./config.js";
+import { showLoginModal } from "./modal.js";
 
 // this will define a blob of data, then incrementally push the data into a queue.
 async function runDynamicDistribution() {
@@ -14,14 +16,14 @@ async function runDynamicDistribution() {
   const chartParams = setupChart(qSize);
   const data = new MaxLengthQueue(qSize);
 
+  // Parse symbol from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const symbol = urlParams.get("symbol") || "SPY"; // Default to SPY if no symbol provided
+
   // Connect to NATS and subscribe to updates
   try {
-    const basicAuth = `Basic ${btoa(
-      `${BASIC_AUTH_EMAIL}:${BASIC_AUTH_PASSWORD}`
-    )}`;
-
     // Get and validate/refresh JWT token
-    const token = await ensureValidToken(ENDPOINT, LSATK, basicAuth);
+    const token = await ensureValidToken();
 
     console.log("Connecting to NATS server", NATS_URL);
     const nc = await connect({
@@ -29,12 +31,30 @@ async function runDynamicDistribution() {
       authenticator: tokenAuthenticator(token),
     });
 
+    // Request the server to start streaming data for this symbol
+    const response = await authenticatedFetch(
+      `${AUTH_CONFIG.endpoints.stream}?symbol=${symbol}`,
+      null,
+      {
+        method: "POST",
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to request data stream");
+    }
+    const streamData = await response.json();
+    const streamSubject = streamData.subject;
+
+    // Subscribe to the specific subject for this symbol
+    // FIXME: eventually we should subscribe to the specific subject for this symbol
     const sub = nc.subscribe("godxfeed");
+    const decoder = new StringCodec();
 
     // Process incoming messages
     for await (const msg of sub) {
-      const parsed = JSON.parse(new TextDecoder().decode(msg.data));
-      data.enqueue({ value: parsed });
+      const parsed = JSON.parse(decoder.decode(msg.data));
+      data.enqueue({ value: parsed }); // Using bid_price as the value
       updateChart(chartParams, data);
     }
   } catch (error) {
@@ -259,4 +279,48 @@ function updateChart(chartParams, data) {
 
 // This is the main entry point for the dynamic distribution plot.
 // It will run when the page loads.
-$(document).ready(async () => await runDynamicDistribution());
+document.addEventListener("DOMContentLoaded", async () => {
+  // Check if token exists in localStorage
+  let token = localStorage.getItem(AUTH_CONFIG.tokenKey);
+
+  // Check if token is in URL parameters
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get("token");
+
+  // If token is in URL, save it to localStorage and remove from URL
+  if (urlToken) {
+    localStorage.setItem(AUTH_CONFIG.tokenKey, urlToken);
+    token = urlToken;
+
+    // Remove token from URL without refreshing the page
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.delete("token");
+    window.history.replaceState({}, document.title, newUrl.toString());
+  }
+
+  if (!token) {
+    // No token found, show login modal
+    showLoginModal(runDynamicDistribution);
+  } else {
+    // Token exists, verify it
+    try {
+      const response = await authenticatedFetch(
+        AUTH_CONFIG.endpoints.testToken
+      );
+
+      if (!response.ok) {
+        // Token is invalid, show login modal
+        throw new Error("Invalid token");
+      }
+
+      // Token is valid, run the dynamic distribution
+      await runDynamicDistribution();
+    } catch (error) {
+      console.error("Token validation error:", error);
+      // Clear invalid token
+      localStorage.removeItem(AUTH_CONFIG.tokenKey);
+      // Show login modal
+      showLoginModal(runDynamicDistribution);
+    }
+  }
+});

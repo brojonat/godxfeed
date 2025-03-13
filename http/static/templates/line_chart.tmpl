@@ -16,15 +16,11 @@
 
     <!-- Template Variables -->
     <script>
-        const ENDPOINT = {{ .Endpoint }};
         const NATS_URL = {{ .NATSURL }};
-        const LSATK = {{ .LocalStorageAuthTokenKey }};
-        const BASIC_AUTH_EMAIL = {{ .BasicAuthEmail }};
-        const BASIC_AUTH_PASSWORD = {{ .BasicAuthPassword }};
-        const SYMBOL = {{ .Symbol }};
     </script>
 
     <!-- Application Scripts -->
+    <script type="module" src="{{ .Endpoint }}/static/js/config.js"></script>
     <script src="{{ .Endpoint }}/static/js/line_chart.js" type="module" defer></script>
 </head>
 <body>
