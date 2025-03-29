@@ -14,16 +14,7 @@ import (
 	"github.com/brojonat/godxfeed/service"
 	sapi "github.com/brojonat/godxfeed/service/api"
 	"github.com/brojonat/server-tools/stools"
-	"github.com/gorilla/websocket"
 )
-
-// FIXME: origins need updating
-// actually not if we're not using websockets
-// var upgrader = bwebsocket.DefaultUpgrader([]string{"http://localhost:9000", "http://localhost:9000"})
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-}
 
 func writeOK(w http.ResponseWriter) {
 	resp := api.DefaultJSONResponse{Message: "ok"}
@@ -46,7 +37,7 @@ func writeEmptyResultError(w http.ResponseWriter) {
 	writeJSONResponse(w, resp, http.StatusNotFound)
 }
 
-func writeJSONResponse(w http.ResponseWriter, resp interface{}, code int) {
+func writeJSONResponse(w http.ResponseWriter, resp any, code int) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(resp)
 }
@@ -79,6 +70,7 @@ func RunHTTPServer(
 	dxEndpoint string,
 	dxToken string,
 	natsBrowserURL string,
+	devMode bool,
 ) error {
 
 	// new router
@@ -86,10 +78,6 @@ func RunHTTPServer(
 
 	// max body size, other parsing params
 	maxBytes := int64(1048576)
-
-	// subtle gotcha: if you omit this origin check, you'll get a CORS error
-	// in the browser console and it's super annoying to debug.
-	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 
 	// parse and transform the comma separated envs that configure CORS
 	hs := os.Getenv("CORS_HEADERS")
@@ -107,7 +95,7 @@ func RunHTTPServer(
 	origins := normalizeCORSParams(ogs)
 
 	// setup static file server (this will also parse the templates that are embedded in the binary)
-	staticHandler, err := setupStaticHandler()
+	staticHandler, err := setupStaticHandler(devMode)
 	if err != nil {
 		return fmt.Errorf("startup: failed to setup js static file server: %w", err)
 	}
@@ -199,7 +187,16 @@ func RunHTTPServer(
 	// plots
 	mux.Handle("GET /plots", stools.AdaptHandler(
 		handleGetPlots(tts, natsBrowserURL),
-		redirectToIndexOnAuthFailure(queryAuthorizerCtxSetEmail(getSecretKey)),
+		// this requires a query param or a bearer token to facilitate
+		// browser-based auth (we could alternatively use a cookie)
+		atLeastOneAuth(queryAuthorizerCtxSetEmail(getSecretKey), bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+
+	// webhook handlers
+	mux.Handle("POST /webhook/buy-me-a-coffee", stools.AdaptHandler(
+		handleBMCWebhook(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		bmcWebhookAuthorizer(tts, getWebhookSecret),
 	))
 
 	// Add this near the other route handlers in RunHTTPServer

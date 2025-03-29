@@ -38,6 +38,7 @@ func setupService(
 	natsGodxfeedUser string,
 	natsGodxfeedPassword string,
 	natsNkeySeed string,
+	devMode bool,
 ) (service.Service, error) {
 
 	if minimalSetup {
@@ -178,6 +179,7 @@ func serve_http(ctx *cli.Context) error {
 		ctx.String("nats-godxfeed-user"),
 		ctx.String("nats-godxfeed-password"),
 		ctx.String("nats-nkey-seed"),
+		ctx.Bool("dev-mode"),
 	)
 	if err != nil {
 		return err
@@ -278,5 +280,6 @@ func serve_http(ctx *cli.Context) error {
 		ctx.String("dxfeed-endpoint"),
 		ctx.String("streamer-token"),
 		ctx.String("nats-browser-url"),
+		ctx.Bool("dev-mode"),
 	)
 }

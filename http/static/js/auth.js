@@ -7,16 +7,13 @@ export async function ensureValidToken(endpoint, callback) {
   const token = localStorage.getItem(AUTH_CONFIG.tokenKey);
 
   if (!token) {
-    // No token found, try to get a new one
-    try {
-      const newToken = await getNewToken(endpoint);
-      localStorage.setItem(AUTH_CONFIG.tokenKey, newToken);
-      if (callback) callback(newToken);
-      return newToken;
-    } catch (error) {
-      console.error("Failed to get new token:", error);
-      throw error;
-    }
+    // No token found, show login modal
+    return new Promise((resolve) => {
+      showLoginModal((token) => {
+        if (callback) callback(token);
+        resolve(token);
+      });
+    });
   }
 
   // Token exists, verify it
@@ -28,11 +25,13 @@ export async function ensureValidToken(endpoint, callback) {
     });
 
     if (!response.ok) {
-      // Token is invalid, get a new one
-      const newToken = await getNewToken(endpoint);
-      localStorage.setItem(AUTH_CONFIG.tokenKey, newToken);
-      if (callback) callback(newToken);
-      return newToken;
+      // Token is invalid, show login modal
+      return new Promise((resolve) => {
+        showLoginModal((token) => {
+          if (callback) callback(token);
+          resolve(token);
+        });
+      });
     }
 
     // Token is valid
@@ -40,36 +39,15 @@ export async function ensureValidToken(endpoint, callback) {
     return token;
   } catch (error) {
     console.error("Token validation error:", error);
-    // Try to get a new token
-    try {
-      const newToken = await getNewToken(endpoint);
-      localStorage.setItem(AUTH_CONFIG.tokenKey, newToken);
-      if (callback) callback(newToken);
-      return newToken;
-    } catch (tokenError) {
-      console.error("Failed to get new token:", tokenError);
-      throw tokenError;
-    }
+    return new Promise((resolve) => {
+      showLoginModal((token) => {
+        if (callback) callback(token);
+        resolve(token);
+      });
+    });
   }
 }
 
-// Function to get a new token
-// FIXME: this should just prompt the user for their auth token
-async function getNewToken(endpoint) {
-  const response = await fetch("/token", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer abc123",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to get new token");
-  }
-
-  const data = await response.json();
-  return data.token;
-}
 // Create a utility function for authenticated fetch requests
 export async function authenticatedFetch(url, onAuthFailure, options = {}) {
   const token = localStorage.getItem(AUTH_CONFIG.tokenKey);

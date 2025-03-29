@@ -21,6 +21,7 @@ func get_symbol_data(ctx *cli.Context) error {
 		ctx.String("nats-godxfeed-user"),
 		ctx.String("nats-godxfeed-password"),
 		ctx.String("nats-nkey-seed"),
+		ctx.Bool("dev-mode"),
 	)
 	if err != nil {
 		return err
@@ -46,6 +47,7 @@ func get_option_chain(ctx *cli.Context) error {
 		ctx.String("nats-godxfeed-user"),
 		ctx.String("nats-godxfeed-password"),
 		ctx.String("nats-nkey-seed"),
+		ctx.Bool("dev-mode"),
 	)
 	if err != nil {
 		return err

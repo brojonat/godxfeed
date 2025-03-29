@@ -14,8 +14,7 @@ var static embed.FS
 // Add at the top with other template variables
 var indexTemplate *template.Template
 
-func setupStaticHandler() (http.Handler, error) {
-	devMode := true
+func setupStaticHandler(devMode bool) (http.Handler, error) {
 	if devMode {
 		// In development mode, load templates from disk
 		indexTemplate = template.Must(template.ParseFiles("http/static/templates/index.tmpl"))

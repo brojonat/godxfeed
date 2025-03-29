@@ -40,38 +40,35 @@ func new_bearer_token(ctx *cli.Context) error {
 	}
 
 	// Get env file path from context
-	envPath := ctx.String("env-path")
-	if envPath == "" {
-		fmt.Printf("%s\n", body)
-		return nil
-	}
-
-	// Read existing .env file
-	content, err := os.ReadFile(envPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read .env file: %w", err)
-	}
-
-	// Update or append AUTH_TOKEN using parsed token
-	lines := strings.Split(string(content), "\n")
-	found := false
-	for i, line := range lines {
-		if strings.HasPrefix(line, "AUTH_TOKEN=") {
-			lines[i] = fmt.Sprintf("AUTH_TOKEN=%s", tokenResp.Token)
-			found = true
-			break
+	envFile := ctx.String("env-file")
+	if envFile != "" {
+		// Read existing .env file
+		content, err := os.ReadFile(envFile)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read .env file: %w", err)
 		}
-	}
-	if !found {
-		lines = append(lines, fmt.Sprintf("AUTH_TOKEN=%s", tokenResp.Token))
-	}
 
-	// Write back to .env file
-	err = os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write .env file: %w", err)
+		// Update or append AUTH_TOKEN using parsed token
+		lines := strings.Split(string(content), "\n")
+		found := false
+		for i, line := range lines {
+			if strings.HasPrefix(line, "AUTH_TOKEN=") {
+				lines[i] = fmt.Sprintf("AUTH_TOKEN=%s", tokenResp.Token)
+				found = true
+				break
+			}
+		}
+		if !found {
+			lines = append(lines, fmt.Sprintf("AUTH_TOKEN=%s", tokenResp.Token))
+		}
+
+		// Write back to .env file
+		err = os.WriteFile(envFile, []byte(strings.Join(lines, "\n")), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write .env file: %w", err)
+		}
+		fmt.Printf("Bearer token written to %s\n", envFile)
 	}
-	fmt.Printf("Auth token written to %s\n", envPath)
 	return nil
 }
 
@@ -92,6 +89,7 @@ func new_session_token(ctx *cli.Context) error {
 		ctx.String("nats-godxfeed-user"),
 		ctx.String("nats-godxfeed-password"),
 		ctx.String("nats-nkey-seed"),
+		ctx.Bool("dev-mode"),
 	)
 	if err != nil {
 		return err
@@ -125,45 +123,43 @@ func new_session_token(ctx *cli.Context) error {
 	}
 
 	// Use sessionResp.SessionToken instead of raw resp
-	envPath := ctx.String("env-path")
-	if envPath == "" {
-		return writeCLIResponse(resp, nil)
-	}
-
-	// Read existing .env file
-	content, err := os.ReadFile(envPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read .env file: %w", err)
-	}
-
-	// Update the SESSION_TOKEN with parsed token
-	lines := strings.Split(string(content), "\n")
-	found := false
-	for i, line := range lines {
-		if strings.HasPrefix(line, "SESSION_TOKEN=") {
-			lines[i] = fmt.Sprintf("SESSION_TOKEN=%s", sessionResp.SessionToken)
-			found = true
-			break
+	envFile := ctx.String("env-file")
+	if envFile != "" {
+		// Read existing .env file
+		content, err := os.ReadFile(envFile)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read .env file: %w", err)
 		}
-	}
-	if !found {
-		lines = append(lines, fmt.Sprintf("SESSION_TOKEN=%s", sessionResp.SessionToken))
-	}
 
-	// Write back to .env file
-	err = os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write .env file: %w", err)
+		// Update the SESSION_TOKEN with parsed token
+		lines := strings.Split(string(content), "\n")
+		found := false
+		for i, line := range lines {
+			if strings.HasPrefix(line, "SESSION_TOKEN=") {
+				lines[i] = fmt.Sprintf("SESSION_TOKEN=%s", sessionResp.SessionToken)
+				found = true
+				break
+			}
+		}
+		if !found {
+			lines = append(lines, fmt.Sprintf("SESSION_TOKEN=%s", sessionResp.SessionToken))
+		}
+
+		// Write back to .env file
+		err = os.WriteFile(envFile, []byte(strings.Join(lines, "\n")), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write .env file: %w", err)
+		}
+		fmt.Printf("Session token written to %s\n", envFile)
 	}
-	fmt.Printf("Session token written to %s\n", envPath)
 	return nil
 }
 
 func dxlink_api_token(ctx *cli.Context) error {
-	// Get the session token from env file if env-path is provided
+	// Get the session token from env file if env-file is provided
 	sessionToken := ctx.String("session-token")
-	if envPath := ctx.String("env-path"); envPath != "" {
-		content, err := os.ReadFile(envPath)
+	if envFile := ctx.String("env-file"); envFile != "" {
+		content, err := os.ReadFile(envFile)
 		if err != nil {
 			return fmt.Errorf("failed to read .env file: %w", err)
 		}
@@ -193,6 +189,7 @@ func dxlink_api_token(ctx *cli.Context) error {
 		ctx.String("nats-godxfeed-user"),
 		ctx.String("nats-godxfeed-password"),
 		ctx.String("nats-nkey-seed"),
+		ctx.Bool("dev-mode"),
 	)
 	if err != nil {
 		return err
@@ -203,13 +200,13 @@ func dxlink_api_token(ctx *cli.Context) error {
 	}
 
 	// Get env file path from context
-	envPath := ctx.String("env-path")
-	if envPath == "" {
+	envFile := ctx.String("env-file")
+	if envFile == "" {
 		return writeCLIResponse(resp, err)
 	}
 
 	// Read existing .env file
-	content, err := os.ReadFile(envPath)
+	content, err := os.ReadFile(envFile)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read .env file: %w", err)
 	}
@@ -243,10 +240,10 @@ func dxlink_api_token(ctx *cli.Context) error {
 	}
 
 	// Write back to .env file
-	err = os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
+	err = os.WriteFile(envFile, []byte(strings.Join(lines, "\n")), 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
-	fmt.Printf("STREAMER_TOKEN written to %s\n", envPath)
+	fmt.Printf("STREAMER_TOKEN written to %s\n", envFile)
 	return nil
 }

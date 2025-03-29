@@ -5,16 +5,13 @@ import { showLoginModal } from "./modal.js";
 // Define updateLinks function and make it globally available
 window.updateLinks = () => {
   const symbolInput = document.getElementById("symbolInput");
-
   if (!symbolInput) {
     console.error("Symbol input element not found");
     return;
   }
 
   const symbol = symbolInput.value.toUpperCase();
-  const token = localStorage.getItem(AUTH_CONFIG.tokenKey);
 
-  // Check if all link elements exist
   const links = [
     { id: "optionsGridLink", type: PLOT_CONFIG.types.optionsGrid },
     { id: "lineChartLink", type: PLOT_CONFIG.types.lineChart },
@@ -27,24 +24,16 @@ window.updateLinks = () => {
       if (!linkElement) {
         console.error(`Link element with ID ${link.id} not found`);
       } else {
-        // Set the complete URL path with token as query param
-        const plotUrl = `${
-          PLOT_CONFIG.plotsEndpoint
-        }?symbol=${symbol}&plot_kind=${link.type}${
-          token ? `&token=${token}` : ""
-        }`;
+        const plotUrl = `${PLOT_CONFIG.plotsEndpoint}?symbol=${symbol}&plot_kind=${link.type}`;
 
-        // Set href directly now that we're using query params for auth
+        // Set the data-plot-url attribute for the navigation handler
+        linkElement.setAttribute("data-plot-url", plotUrl);
+
+        // Add click handler to handle navigation with auth
+        linkElement.addEventListener("click", handlePlotNavigation);
+
+        // Set href for non-JS fallback
         linkElement.href = plotUrl;
-
-        // Remove any previously added click handlers
-        if (linkElement.hasAttribute("data-handler-attached")) {
-          linkElement.removeEventListener("click", handlePlotNavigation);
-          linkElement.removeAttribute("data-handler-attached");
-        }
-
-        // Reset cursor style
-        linkElement.style.cursor = "";
       }
     } catch (error) {
       console.error(`Error updating link ${link.id}:`, error);
@@ -53,7 +42,7 @@ window.updateLinks = () => {
 };
 
 // Function to handle plot navigation with authentication
-function handlePlotNavigation(event) {
+async function handlePlotNavigation(event) {
   event.preventDefault();
 
   const plotUrl = this.getAttribute("data-plot-url");
@@ -73,23 +62,29 @@ function handlePlotNavigation(event) {
     return;
   }
 
-  // Option 1: Open in new window/tab with token in URL (less secure but simpler)
-  // window.open(`${plotUrl}&token=${token}`, '_blank');
-
-  // Option 2: Use fetch with proper Authorization header and display the result
-  authenticatedFetch(plotUrl, {}, showLoginModal)
-    .then((response) => {
-      if (response.ok) {
-        // For HTML responses, you can redirect to the URL
-        // The server should validate the token from the Authorization header
-        window.location.href = plotUrl;
-      } else {
-        console.error("Failed to access plot:", response.statusText);
-      }
-    })
-    .catch((error) => {
-      console.error("Error accessing plot:", error);
+  try {
+    // First verify the token is valid
+    const response = await fetch(AUTH_CONFIG.endpoints.testToken, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    // If token is valid, navigate to the page with token as query param
+    const url = new URL(plotUrl, window.location.origin);
+    url.searchParams.append("token", token);
+    window.location.href = url.toString();
+  } catch (error) {
+    console.error("Navigation failed:", error);
+    if (error.status === 401) {
+      // Handle unauthorized error - show login modal
+      showLoginModal(() => handlePlotNavigation.call(this, event));
+    }
+  }
 }
 
 async function fetchAvailableSymbols() {

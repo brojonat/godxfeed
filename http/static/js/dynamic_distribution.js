@@ -279,23 +279,24 @@ function updateChart(chartParams, data) {
 // This is the main entry point for the dynamic distribution plot.
 // It will run when the page loads.
 document.addEventListener("DOMContentLoaded", async () => {
-  // Check if token exists in localStorage
-  let token = localStorage.getItem(AUTH_CONFIG.tokenKey);
-
-  // Check if token is in URL parameters
+  // Check for token in URL parameters
   const urlParams = new URLSearchParams(window.location.search);
   const urlToken = urlParams.get("token");
 
   // If token is in URL, save it to localStorage and remove from URL
   if (urlToken) {
     localStorage.setItem(AUTH_CONFIG.tokenKey, urlToken);
-    token = urlToken;
 
     // Remove token from URL without refreshing the page
-    const newUrl = new URL(window.location.href);
-    newUrl.searchParams.delete("token");
-    window.history.replaceState({}, document.title, newUrl.toString());
+    urlParams.delete("token");
+    const newUrl = `${window.location.pathname}${
+      urlParams.toString() ? "?" + urlParams.toString() : ""
+    }`;
+    window.history.replaceState({}, document.title, newUrl);
   }
+
+  // Get token (either from localStorage or just saved from URL)
+  const token = localStorage.getItem(AUTH_CONFIG.tokenKey);
 
   if (!token) {
     // No token found, show login modal
@@ -303,12 +304,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   } else {
     // Token exists, verify it
     try {
-      const response = await authenticatedFetch(
-        AUTH_CONFIG.endpoints.testToken
-      );
+      const response = await fetch(AUTH_CONFIG.endpoints.testToken, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
       if (!response.ok) {
-        // Token is invalid, show login modal
         throw new Error("Invalid token");
       }
 

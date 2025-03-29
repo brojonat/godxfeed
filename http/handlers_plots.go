@@ -23,46 +23,34 @@ var lineChartPlotTemplate *template.Template
 var optionsGridTemplate *template.Template
 
 type dynamicDistributionPlotTemplateData struct {
-	Endpoint                 string
-	NATSURL                  string
-	PlotKind                 string
-	LocalStorageAuthTokenKey string
-	Symbol                   string
-	BasicAuthEmail           string
-	BasicAuthPassword        string
+	Endpoint string
+	NATSURL  string
+	PlotKind string
+	Symbol   string
 }
+
 type natsPlotTemplateData struct {
-	Endpoint                 string
-	NATSURL                  string
-	PlotKind                 string
-	LocalStorageAuthTokenKey string
-	Symbol                   string
-	BasicAuthEmail           string
-	BasicAuthPassword        string
+	Endpoint string
+	NATSURL  string
+	PlotKind string
+	Symbol   string
 }
+
 type lineChartPlotTemplateData struct {
-	Endpoint                 string
-	NATSURL                  string
-	PlotKind                 string
-	LocalStorageAuthTokenKey string
-	Symbol                   string
-	BasicAuthEmail           string
-	BasicAuthPassword        string
+	Endpoint string
+	NATSURL  string
+	PlotKind string
+	Symbol   string
 }
+
 type optionsGridTemplateData struct {
-	Endpoint                 string
-	PlotKind                 string
-	LocalStorageAuthTokenKey string
-	Symbol                   string
-	BasicAuthEmail           string
-	BasicAuthPassword        string
+	Endpoint string
+	PlotKind string
+	Symbol   string
 }
 
 type indexTemplateData struct {
-	Endpoint                 string
-	LocalStorageAuthTokenKey string
-	BasicAuthEmail           string
-	BasicAuthPassword        string
+	Endpoint string
 }
 
 func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
@@ -76,11 +64,10 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 		switch pk {
 		case PlotKindDynamicDistribution:
 			data := dynamicDistributionPlotTemplateData{
-				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
-				NATSURL:                  natsBrowserURL,
-				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
-				PlotKind:                 pk,
-				Symbol:                   symbol,
+				Endpoint: os.Getenv("GODXFEED_ENDPOINT"),
+				NATSURL:  natsBrowserURL,
+				PlotKind: pk,
+				Symbol:   symbol,
 			}
 			w.WriteHeader(http.StatusOK)
 			err := dynamicDistributionPlotTemplate.Execute(w, data)
@@ -91,13 +78,10 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 			}
 		case PlotKindNats:
 			data := natsPlotTemplateData{
-				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
-				NATSURL:                  natsBrowserURL,
-				BasicAuthEmail:           "brojonat@gmail.com",
-				BasicAuthPassword:        os.Getenv("SECRET_KEY"),
-				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
-				PlotKind:                 pk,
-				Symbol:                   symbol,
+				Endpoint: os.Getenv("GODXFEED_ENDPOINT"),
+				NATSURL:  natsBrowserURL,
+				PlotKind: pk,
+				Symbol:   symbol,
 			}
 			w.WriteHeader(http.StatusOK)
 			err := natsPlotTemplate.Execute(w, data)
@@ -108,13 +92,10 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 			}
 		case PlotKindLineChart:
 			data := lineChartPlotTemplateData{
-				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
-				NATSURL:                  natsBrowserURL,
-				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
-				PlotKind:                 pk,
-				Symbol:                   symbol,
-				BasicAuthEmail:           "brojonat@gmail.com",
-				BasicAuthPassword:        os.Getenv("SECRET_KEY"),
+				Endpoint: os.Getenv("GODXFEED_ENDPOINT"),
+				NATSURL:  natsBrowserURL,
+				PlotKind: pk,
+				Symbol:   symbol,
 			}
 			w.WriteHeader(http.StatusOK)
 			err := lineChartPlotTemplate.Execute(w, data)
@@ -125,12 +106,9 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 			}
 		case PlotKindOptionsGrid:
 			data := optionsGridTemplateData{
-				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
-				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
-				PlotKind:                 pk,
-				Symbol:                   symbol,
-				BasicAuthEmail:           "brojonat@gmail.com",
-				BasicAuthPassword:        os.Getenv("SECRET_KEY"),
+				Endpoint: os.Getenv("GODXFEED_ENDPOINT"),
+				PlotKind: pk,
+				Symbol:   symbol,
 			}
 			w.WriteHeader(http.StatusOK)
 			err := optionsGridTemplate.Execute(w, data)
@@ -143,17 +121,13 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 			writeBadRequestError(w, fmt.Errorf("unsupported plot_kind %s", pk))
 			return
 		}
-
 	}
 }
 
 func handleIndex() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data := indexTemplateData{
-			Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
-			LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
-			BasicAuthEmail:           "brojonat@gmail.com",
-			BasicAuthPassword:        os.Getenv("SECRET_KEY"),
+			Endpoint: os.Getenv("GODXFEED_ENDPOINT"),
 		}
 
 		w.WriteHeader(http.StatusOK)

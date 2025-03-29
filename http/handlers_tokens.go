@@ -11,6 +11,17 @@ import (
 	"github.com/golang-jwt/jwt"
 )
 
+func createBearerToken(email string, expiresAt time.Time) (string, error) {
+	sc := jwt.StandardClaims{
+		ExpiresAt: expiresAt.Unix(),
+	}
+	c := authJWTClaims{
+		StandardClaims: sc,
+		Email:          email,
+	}
+	return generateAccessToken(c)
+}
+
 // handleIssueAuthToken returns an auth token for the http server
 func handleIssueToken(s service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -19,14 +30,11 @@ func handleIssueToken(s service.Service) http.HandlerFunc {
 			writeInternalError(s, w, fmt.Errorf("missing context key for basic auth email"))
 			return
 		}
-		sc := jwt.StandardClaims{
-			ExpiresAt: time.Now().Add(2 * 7 * 24 * time.Hour).Unix(),
+		token, err := createBearerToken(email, time.Now().Add(2*7*24*time.Hour))
+		if err != nil {
+			writeInternalError(s, w, err)
+			return
 		}
-		c := authJWTClaims{
-			StandardClaims: sc,
-			Email:          email,
-		}
-		token, _ := generateAccessToken(c)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(struct {
 			Token string `json:"token"`
