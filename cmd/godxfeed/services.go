@@ -110,7 +110,6 @@ func setupService(
 //
 // - handler-debug: if true, the debug handler will be added
 // - handler-persist: if true, the persist handler will be added
-// - handler-publish: if true, the publish handler will be added
 func getSymbolDataHandlers(tts service.Service, ctx *cli.Context) []func([]byte) error {
 
 	// log all the data at a debug level
@@ -134,19 +133,6 @@ func getSymbolDataHandlers(tts service.Service, ctx *cli.Context) []func([]byte)
 		return nil
 	}
 
-	// publish the data to NATS
-	publish := func(b []byte) error {
-		err := tts.PublishSymbolData(b)
-		if err != nil {
-			tts.Log(
-				int(slog.LevelError),
-				"error publishing data to NATS",
-				"error", err.Error(),
-			)
-		}
-		return nil
-	}
-
 	// add handlers based on the CLI context
 	handlers := []func([]byte) error{}
 	if ctx.Bool("handler-debug") {
@@ -154,9 +140,6 @@ func getSymbolDataHandlers(tts service.Service, ctx *cli.Context) []func([]byte)
 	}
 	if ctx.Bool("handler-persist") {
 		handlers = append(handlers, persist)
-	}
-	if ctx.Bool("handler-publish") {
-		handlers = append(handlers, publish)
 	}
 	return handlers
 }
@@ -251,6 +234,7 @@ func serve_http(ctx *cli.Context) error {
 	if !ctx.Bool("minimal-setup") {
 		if len(handlers) > 0 {
 			go func() {
+				tts.Log(int(slog.LevelInfo), "setting up streamer", "symbols", syms)
 				c, err := tts.StreamAPIFeedCompactQuoteData(ctx.Context, syms)
 				if err != nil {
 					tts.Log(int(slog.LevelError), fmt.Sprintf("error setting up streamer: %s", err.Error()))
@@ -273,6 +257,14 @@ func serve_http(ctx *cli.Context) error {
 					}
 				}
 			}()
+		}
+	}
+
+	// start the symbol streams
+	for _, sym := range syms {
+		err := tts.StartSymbolStream(sym)
+		if err != nil {
+			tts.Log(int(slog.LevelError), fmt.Sprintf("error starting symbol stream: %s", err.Error()))
 		}
 	}
 

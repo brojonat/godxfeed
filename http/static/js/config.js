@@ -17,7 +17,6 @@ export const PLOT_CONFIG = {
   types: {
     optionsGrid: "options_grid",
     lineChart: "line_chart",
-    ridgeline: "ridgeline",
     dynamicDistribution: "dynamic_distribution",
   },
 

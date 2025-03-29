@@ -359,11 +359,6 @@ func main() {
 								Usage: "Persist the symbol data to the database.",
 								Value: false,
 							},
-							&cli.BoolFlag{
-								Name:  "handler-publish",
-								Usage: "Publish the symbol data to NATS.",
-								Value: false,
-							},
 						},
 						Action: func(ctx *cli.Context) error {
 							return serve_http(ctx)

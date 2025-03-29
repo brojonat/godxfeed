@@ -89,7 +89,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .strike-presets button.active {
-  background-color: #10b981;
+  background-color: #22c55e;
   border-color: #059669;
 }
 
@@ -152,7 +152,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 input:checked + .slider {
-  background-color: #10b981;
+  background-color: #22c55e;
 }
 
 input:checked + .slider:before {
@@ -186,10 +186,10 @@ input:checked + .slider:before {
 
 /* Loading State */
 #loading {
-  color: #9ca3af;
-  font-size: 0.9em;
-  padding: 20px;
-  text-align: center;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 /* Auto Update Button */
@@ -210,4 +210,46 @@ input:checked + .slider:before {
 .auto-update-button.active {
   background-color: #10b981;
   border-color: #059669;
+}
+
+.content-container {
+  margin: 20px;
+  width: 95%;
+}
+
+.grid-container {
+  border: 1px solid #ddd;
+  background-color: #f9f9f9;
+  padding: 10px;
+  margin-bottom: 20px;
+  min-height: 400px;
+}
+
+.grid-container h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  text-align: center;
+}
+
+.tooltip {
+  position: absolute;
+  background: white;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  pointer-events: none;
+  font-size: 12px;
+  z-index: 1000;
+}
+
+.grid-title-container {
+  text-align: center;
+  margin: 20px 0;
+}
+
+.options-grids-container {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  width: 100%;
 }

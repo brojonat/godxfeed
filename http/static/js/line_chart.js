@@ -400,6 +400,12 @@ async function runLineChart() {
   // Update the preset button listeners
   for (const button of document.querySelectorAll(".time-presets button")) {
     button.addEventListener("click", () => {
+      // Add active class to clicked button and remove from others
+      for (const btn of document.querySelectorAll(".time-presets button")) {
+        btn.classList.remove("active");
+      }
+      button.classList.add("active");
+
       const timeRangeMinutes = Number.parseInt(button.dataset.minutes);
 
       // Get the current state of datetime pickers when the callback executes

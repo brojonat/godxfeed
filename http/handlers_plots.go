@@ -11,25 +11,17 @@ import (
 )
 
 const (
-	PlotKindRidgeLine           string = "ridgeline"
 	PlotKindDynamicDistribution string = "dynamic_distribution"
 	PlotKindNats                string = "nats"
 	PlotKindLineChart           string = "line_chart"
 	PlotKindOptionsGrid         string = "options_grid"
 )
 
-var ridgelinePlotTemplate *template.Template
 var natsPlotTemplate *template.Template
 var dynamicDistributionPlotTemplate *template.Template
 var lineChartPlotTemplate *template.Template
 var optionsGridTemplate *template.Template
 
-type ridgelinePlotTemplateData struct {
-	Endpoint                 string
-	PlotKind                 string
-	LocalStorageAuthTokenKey string
-	Symbol                   string
-}
 type dynamicDistributionPlotTemplateData struct {
 	Endpoint                 string
 	NATSURL                  string
@@ -82,21 +74,6 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 			return
 		}
 		switch pk {
-		// pretty much all plots should be served by this same template
-		case PlotKindRidgeLine:
-			data := ridgelinePlotTemplateData{
-				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),
-				LocalStorageAuthTokenKey: os.Getenv("LOCAL_STORAGE_AUTH_TOKEN_KEY"),
-				PlotKind:                 pk,
-				Symbol:                   symbol,
-			}
-			w.WriteHeader(http.StatusOK)
-			err := ridgelinePlotTemplate.Execute(w, data)
-			if err != nil {
-				s.Log(int(slog.LevelError), "Error rendering template", "error", err)
-				writeInternalError(s, w, err)
-				return
-			}
 		case PlotKindDynamicDistribution:
 			data := dynamicDistributionPlotTemplateData{
 				Endpoint:                 os.Getenv("GODXFEED_ENDPOINT"),

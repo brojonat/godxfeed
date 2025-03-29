@@ -76,7 +76,6 @@ And to get the options chain for a symbol, you can do the following (note that w
 
 You can also view the web pages by running the server and then going to `http://localhost:8080/static/index.html` in your browser. This will show you a dynamic histogram. We have more pages we're working on; you can go to:
 
-- `http://localhost:8080/plots?symbol=spy&plot_kind=ridgeline` to see a ridgeline plot for SPY.
 - `http://localhost:8080/plots?symbol=spy&plot_kind=nats` to connect to the NATS stream for SPY.
 
 ## TODO

@@ -47,8 +47,7 @@ async function runDynamicDistribution() {
     const streamSubject = streamData.subject;
 
     // Subscribe to the specific subject for this symbol
-    // FIXME: eventually we should subscribe to the specific subject for this symbol
-    const sub = nc.subscribe("godxfeed");
+    const sub = nc.subscribe("godxfeed.SPY");
     const decoder = new StringCodec();
 
     // Process incoming messages

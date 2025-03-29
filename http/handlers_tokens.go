@@ -44,6 +44,11 @@ func handleRefreshToken(s service.Service) http.HandlerFunc {
 	}
 }
 
+// handleNATSCallout returns simply returns the token that was passed
+// in the Authroization header. This handler should be wrapped in a
+// handler that checks the token and returns a 401 if it's invalid,
+// so we know this token is valid; we simply need to return a 200
+// response to the caller (which is the NATS server).
 func handleNATSCallout(s service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

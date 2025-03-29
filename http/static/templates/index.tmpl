@@ -1,44 +1,50 @@
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <title>GoDXFeed Dashboard</title>
-    <link rel="stylesheet" href="/static/css/index.css">
-</head>
-<body>
+    <link rel="stylesheet" href="/static/css/index.css" />
+  </head>
+  <body>
     <div class="container">
-        <h1>GoDXFeed Dashboard</h1>
+      <h1>GoDXFeed Dashboard</h1>
 
-        <div class="symbol-input">
-            <input type="text" id="symbolInput" placeholder="Symbol" value="SPY" oninput="updateLinks()">
+      <div class="symbol-input">
+        <input
+          type="text"
+          id="symbolInput"
+          placeholder="Symbol"
+          value="SPY"
+          oninput="updateLinks()"
+        />
+      </div>
+
+      <div class="plot-grid">
+        <div class="plot-card">
+          <h2>Line Chart</h2>
+          <p>
+            Monitor the bid/ask spread in real-time with this interactive line
+            chart. TODO: add offer rate assuming Poisson.
+          </p>
+          <a href="#" class="plot-link" id="lineChartLink">View Plot</a>
         </div>
 
-        <div class="plot-grid">
-            <div class="plot-card">
-                <h2>Options Grid</h2>
-                <p>View options chain data in a grid format with real-time updates.</p>
-                <a href="#" class="plot-link" id="optionsGridLink">View Plot</a>
-            </div>
-
-            <div class="plot-card">
-                <h2>Line Chart</h2>
-                <p>Track price movements over time with interactive line charts.</p>
-                <a href="#" class="plot-link" id="lineChartLink">View Plot</a>
-            </div>
-
-            <div class="plot-card">
-                <h2>Ridgeline Plot</h2>
-                <p>Visualize option price distributions across different strikes.</p>
-                <a href="#" class="plot-link" id="ridgelineLink">View Plot</a>
-            </div>
-
-            <div class="plot-card">
-                <h2>Dynamic Distribution</h2>
-                <p>See real-time price distribution changes for options.</p>
-                <a href="#" class="plot-link" id="dynamicDistLink">View Plot</a>
-            </div>
+        <div class="plot-card">
+          <h2>Options Grid</h2>
+          <p>
+            Options chain data in a grid format with real-time updates. Useful
+            for spotting unusual options spreads far out of the money.
+          </p>
+          <a href="#" class="plot-link" id="optionsGridLink">View Plot</a>
         </div>
+
+        <div class="plot-card">
+          <h2>Dynamic Distribution</h2>
+          <p>Real time distribution of symbol price over time.</p>
+          <a href="#" class="plot-link" id="dynamicDistLink">View Plot</a>
+        </div>
+      </div>
     </div>
     <script type="module" src="/static/js/config.js"></script>
     <script type="module" src="/static/js/index.js"></script>
-</body>
+  </body>
 </html>

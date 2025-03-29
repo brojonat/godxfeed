@@ -106,6 +106,8 @@ type Service interface {
 	// PublishSymbolData publishes the symbol data to NATS.
 	PublishSymbolData(data []byte) error
 
+	// StartSymbolStream starts a new symbol stream for the provided symbol.
+	StartSymbolStream(symbol string) error
 	// StopSymbolStream stops streaming for the provided symbol.
 	StopSymbolStream(symbol string)
 	// StopAllStreams stops all streams.
@@ -195,6 +197,7 @@ func NewService(
 // expects a slice of FeedCompactQuote objects, but this may change in the
 // future. It returns the number of rows inserted.
 func (s *service) RecordSymbolData(data []byte) (int64, error) {
+	s.Log(int(slog.LevelDebug), "recording symbol data", "data", string(data))
 	if s.DBQ() == nil {
 		return 0, nil
 	}
@@ -589,6 +592,7 @@ func (s *service) StreamAPIFeedCompactQuoteData(ctx context.Context, syms []stri
 				if !ok {
 					return
 				}
+				fmt.Println("msg", msg)
 				feeds, err := FilterAPIFeedCompactQuoteData(msg)
 				if err != nil {
 					s.Log(int(slog.LevelError), "error filtering feed data: %v", err)

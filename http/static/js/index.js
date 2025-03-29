@@ -18,7 +18,6 @@ window.updateLinks = () => {
   const links = [
     { id: "optionsGridLink", type: PLOT_CONFIG.types.optionsGrid },
     { id: "lineChartLink", type: PLOT_CONFIG.types.lineChart },
-    { id: "ridgelineLink", type: PLOT_CONFIG.types.ridgeline },
     { id: "dynamicDistLink", type: PLOT_CONFIG.types.dynamicDistribution },
   ];
 

@@ -172,7 +172,7 @@ func SetupNatsWithAuthCallout(
 				Allow: jwt.StringList{},
 			},
 			Sub: jwt.Permission{
-				Allow: jwt.StringList{"*"}, // FIXME: lock this down
+				Allow: jwt.StringList{"godxfeed.*"},
 			},
 		}
 		return claims, nil

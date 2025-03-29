@@ -7,7 +7,70 @@ body {
   padding: 20px;
 }
 
-/* Chart Controls */
+h1, h2, h3, h4, h5, h6 {
+  color: #ffffff;
+}
+
+/* Chart Container */
+#plot {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  margin: 20px auto;
+  padding: 20px;
+  max-width: 1020px;
+}
+
+svg {
+  background-color: transparent;
+}
+
+/* Chart Elements */
+.bar {
+  fill: #22c55e;
+  opacity: 0.1;
+}
+
+.line {
+  stroke: #22c55e;
+  stroke-width: 2.5;
+}
+
+.fillarea {
+  fill: #22c55e;
+  fill-opacity: 0.2;
+}
+
+.vline {
+  stroke: #ef4444;
+  stroke-width: 4;
+}
+
+/* Axes */
+.xaxis path,
+.yaxis path {
+  stroke: #4b5563;
+}
+
+.xaxis line,
+.yaxis line {
+  stroke: #4b5563;
+}
+
+.xaxis text,
+.yaxis text {
+  fill: #9ca3af;
+  font-size: 12px;
+}
+
+.x-label,
+.y-label {
+  fill: #9ca3af;
+  font-size: 14px;
+}
+
+/* Controls */
 .chart-controls {
   background: #1f2937;
   border: 1px solid #374151;
@@ -16,8 +79,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  margin: 20px 0;
+  margin: 20px auto;
   padding: 20px;
+  max-width: 1020px;
 }
 
 /* Time Presets */
@@ -67,129 +131,12 @@ body {
   font-weight: bold;
 }
 
-/* DateTime Controls */
-.datetime-container {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-
-.datetime-container label {
-  color: #9ca3af;
-  font-size: 0.9em;
-  font-weight: 500;
-}
-
-.datetime-container input {
-  background: #374151;
-  border: 1px solid #374151;
-  border-radius: 8px;
-  color: #e5e7eb;
-  font-size: 0.9em;
-  padding: 8px 12px;
-  transition: all 0.2s ease;
-}
-
-.datetime-container input:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
-  outline: none;
-}
-
-/* Plot */
-#plot {
-  background: #1f2937;
-  border: 1px solid #374151;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  cursor: grab;
-  margin-top: 20px;
-  padding: 20px;
-}
-
-#plot:active {
-  cursor: grabbing;
-}
-
-/* Loading State */
-#loading {
-  color: #9ca3af;
-  font-size: 0.9em;
-  padding: 20px;
-  text-align: center;
-}
-
-/* Auto Update Controls */
-.auto-update-control {
-  margin-top: 10px;
-  padding: 5px;
-}
-
-.auto-update-label {
-  align-items: center;
-  color: #9ca3af;
-  cursor: pointer;
-  display: flex;
-  gap: 5px;
-}
-
-.auto-update-label input[type="checkbox"] {
-  cursor: pointer;
-}
-
-/* Modern Toggle Switch */
-.switch {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-}
-
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.slider {
-  position: relative;
-  display: inline-block;
-  width: 48px;
-  height: 24px;
-  background-color: #374151;
-  border-radius: 24px;
-  transition: .4s;
-  margin-right: 8px;
-}
-
-.slider:before {
-  position: absolute;
-  content: "";
-  height: 18px;
-  width: 18px;
-  left: 3px;
-  bottom: 3px;
-  background-color: #9ca3af;
-  border-radius: 50%;
-  transition: .4s;
-}
-
-input:checked + .slider {
-  background-color: #22c55e;
-}
-
-input:checked + .slider:before {
-  transform: translateX(24px);
-  background-color: white;
-}
-
-.toggle-label {
-  color: #9ca3af;
-  font-size: 14px;
-}
-
 /* Quote Info Display */
+.quote-info-container {
+  margin: 20px auto;
+  max-width: 1020px;
+}
+
 .quote-info {
   display: flex;
   justify-content: center;
@@ -249,21 +196,66 @@ input:checked + .slider:before {
   margin-right: 5px;
 }
 
-.midpoint-row {
-  margin: 8px 0;
+/* Loading State */
+#loading {
+  color: #9ca3af;
+  font-size: 0.9em;
+  padding: 20px;
+  text-align: center;
 }
 
-.midpoint-row .price {
-font-size: 2.5em;
-color: white;
-font-weight: bold;
+/* Auto Update Controls */
+.auto-update-control {
+  margin-top: 10px;
+  padding: 5px;
 }
 
-#plot {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    justify-content: center;
-    margin: 0 auto;
-    max-width: 1020px; /* 800px (PLOT_WIDTH) + 200px (MARGINAL_WIDTH) + 20px (gap) */
-  }
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 24px;
+  background-color: #374151;
+  border-radius: 24px;
+  transition: .4s;
+  margin-right: 8px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #9ca3af;
+  border-radius: 50%;
+  transition: .4s;
+}
+
+input:checked + .slider {
+  background-color: #22c55e;
+}
+
+input:checked + .slider:before {
+  transform: translateX(24px);
+  background-color: white;
+}
+
+.toggle-label {
+  color: #9ca3af;
+  font-size: 14px;
+}
