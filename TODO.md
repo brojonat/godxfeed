@@ -5,6 +5,28 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
 
 ## Active / near-term
 
+- [ ] **Remove BuyMeACoffee.** Delete `POST /webhook/buy-me-a-coffee`
+      (`http/handlers_webhook.go`), any BMC-signature middleware, the
+      SendGrid-based JWT-email path (`service/email.go` if BMC-only),
+      related env vars (`BMC_*`, `SENDGRID_*`), the README section,
+      and any Makefile / CI references. Token issuance stays — it's
+      now purely `POST /token` basic-auth gated.
+- [ ] **Server-pushed analytic overlays on `/admin` plots.** The
+      frontend's NATS subscription already tails `godxfeed.>`. Extend
+      the subject tree so analytic sidecars can publish per-symbol
+      derived signals on a sibling subject — e.g.
+      `godxfeed.analytics.posterior.<SYMBOL>` carrying a
+      `{type: "posterior", symbol, xs: [...], ys: [...], at: ts}`
+      payload — and have `admin_plots.js` route incoming messages:
+      raw Quote ticks continue to drive the histogram buffer, analytic
+      messages overlay a posterior-density curve on top of the
+      corresponding symbol's panel. The out-of-process producer
+      (separate Python sidecar subscribing to `godxfeed.quote.>`,
+      fitting a PyMC σ model over the last ~5 min, publishing draws
+      on `godxfeed.analytics.posterior.>`) is out of scope for this
+      ticket — the frontend just needs to be ready to render what
+      arrives. Implement the routing + rendering on the JS side
+      first; the producer can be scaffolded later.
 - [ ] Smoke-test the dxLink ingress against a live tastytrade sandbox
       subscription (market-hours dependent) — now exercises Phase 2's
       dynamic add/remove too.
