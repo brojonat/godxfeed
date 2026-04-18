@@ -169,7 +169,7 @@ func makeGraceful(s service.Service) stools.HandlerAdapter {
 					case error:
 						writeInternalError(s, w, v)
 					case string:
-						writeInternalError(s, w, fmt.Errorf(v))
+						writeInternalError(s, w, fmt.Errorf("%s", v))
 					default:
 						writeInternalError(s, w, fmt.Errorf("recovered but unexpected type from recover()"))
 					}

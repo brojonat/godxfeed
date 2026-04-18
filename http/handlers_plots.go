@@ -138,3 +138,23 @@ func handleIndex() http.HandlerFunc {
 		}
 	}
 }
+
+type adminTemplateData struct {
+	Endpoint string
+	NATSURL  string
+}
+
+func handleAdmin(s service.Service, natsBrowserURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data := adminTemplateData{
+			Endpoint: os.Getenv("GODXFEED_ENDPOINT"),
+			NATSURL:  natsBrowserURL,
+		}
+		w.WriteHeader(http.StatusOK)
+		if err := adminTemplate.Execute(w, data); err != nil {
+			s.Log(int(slog.LevelError), "admin template render", "err", err)
+			writeInternalError(s, w, err)
+			return
+		}
+	}
+}

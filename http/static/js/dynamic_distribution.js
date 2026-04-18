@@ -50,10 +50,13 @@ async function runDynamicDistribution() {
     const sub = nc.subscribe("godxfeed.SPY");
     const decoder = new StringCodec();
 
-    // Process incoming messages
+    // Process incoming messages. Each NATS message is a single dxlink Quote
+    // event in JSON form — extract bidPrice as the value we plot.
     for await (const msg of sub) {
-      const parsed = JSON.parse(decoder.decode(msg.data));
-      data.enqueue({ value: parsed }); // Using bid_price as the value
+      const q = JSON.parse(decoder.decode(msg.data));
+      const value = typeof q === "number" ? q : q.bidPrice;
+      if (typeof value !== "number" || Number.isNaN(value)) continue;
+      data.enqueue({ value });
       updateChart(chartParams, data);
     }
   } catch (error) {

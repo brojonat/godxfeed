@@ -66,9 +66,7 @@ func RunHTTPServer(
 	tts service.Service,
 	addr string,
 	twEndpoint string,
-	twToken string,
 	dxEndpoint string,
-	dxToken string,
 	natsBrowserURL string,
 	devMode bool,
 ) error {
@@ -126,25 +124,12 @@ func RunHTTPServer(
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
-	mux.Handle("GET /test-session-token", stools.AdaptHandler(
-		handleTestSessionToken(tts),
-		apiMode(tts, maxBytes, headers, methods, origins),
-		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
-	))
 	mux.Handle("GET /nats-auth-callout", stools.AdaptHandler(
 		handleNATSCallout(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 
-	// returns TastyTrade session token; requires Bearer token
-	mux.Handle("GET /session-token", stools.AdaptHandler(
-		handleNewSessionToken(tts),
-		apiMode(tts, maxBytes, headers, methods, origins),
-		atLeastOneAuth(
-			bearerAuthorizerCtxSetToken(getSecretKey),
-		),
-	))
 	// returns DXFeed streamer token; requires Bearer token
 	mux.Handle("GET /streamer-token", stools.AdaptHandler(
 		handleNewStreamerToken(tts),
@@ -170,16 +155,21 @@ func RunHTTPServer(
 		),
 	))
 
-	// internal timeseries handlers
-	mux.Handle("GET /timeseries/symbol-regexp", stools.AdaptHandler(
-		handleGetSymbolRegexpTimeseriesData(tts),
+	// NATS streaming endpoint
+	mux.Handle("POST /stream", stools.AdaptHandler(
+		handleNATSStream(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 
-	// NATS streaming endpoint
-	mux.Handle("POST /stream", stools.AdaptHandler(
-		handleNATSStream(tts),
+	// dxLink admin/observability endpoints
+	mux.Handle("GET /dxlink/status", stools.AdaptHandler(
+		handleDXLinkStatus(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+	mux.Handle("GET /dxlink/subscriptions", stools.AdaptHandler(
+		handleDXLinkSubscriptions(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
@@ -189,6 +179,10 @@ func RunHTTPServer(
 		handleGetPlots(tts, natsBrowserURL),
 		// this requires a query param or a bearer token to facilitate
 		// browser-based auth (we could alternatively use a cookie)
+		atLeastOneAuth(queryAuthorizerCtxSetEmail(getSecretKey), bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+	mux.Handle("GET /admin", stools.AdaptHandler(
+		handleAdmin(tts, natsBrowserURL),
 		atLeastOneAuth(queryAuthorizerCtxSetEmail(getSecretKey), bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 

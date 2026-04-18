@@ -1,28 +1,47 @@
 package main
 
 import (
+	"github.com/brojonat/godxfeed/service"
 	"github.com/urfave/cli/v2"
 )
 
-func get_symbol_data(ctx *cli.Context) error {
-	tts, err := setupService(
+func oauthCfgFromCtx(ctx *cli.Context) service.OAuthConfig {
+	return service.OAuthConfig{
+		TokenURL:     ctx.String("tw-oauth-token-url"),
+		ClientSecret: ctx.String("tw-oauth-client-secret"),
+		RefreshToken: ctx.String("tw-oauth-refresh-token"),
+	}
+}
+
+func setupServiceForDataCmd(ctx *cli.Context) (service.Service, error) {
+	return setupService(
 		ctx.Context,
 		getDefaultLogger(ctx.Int("log-level")),
 		ctx.String("listen-port"),
 		ctx.String("tastyworks-endpoint"),
-		ctx.String("session-token"),
 		ctx.String("dxfeed-endpoint"),
-		ctx.String("streamer-token"),
-		true,
-		ctx.String("database"),
+		oauthCfgFromCtx(ctx),
+		true, // minimal-setup: these commands don't need NATS
 		ctx.String("nats-url"),
 		ctx.String("nats-auth-user"),
 		ctx.String("nats-auth-password"),
 		ctx.String("nats-godxfeed-user"),
 		ctx.String("nats-godxfeed-password"),
 		ctx.String("nats-nkey-seed"),
-		ctx.Bool("dev-mode"),
 	)
+}
+
+func get_symbol_data(ctx *cli.Context) error {
+	if err := requireFlags(ctx,
+		"tastyworks-endpoint",
+		"tw-oauth-token-url",
+		"tw-oauth-client-secret",
+		"tw-oauth-refresh-token",
+		"symbol",
+	); err != nil {
+		return err
+	}
+	tts, err := setupServiceForDataCmd(ctx)
 	if err != nil {
 		return err
 	}
@@ -31,24 +50,16 @@ func get_symbol_data(ctx *cli.Context) error {
 }
 
 func get_option_chain(ctx *cli.Context) error {
-	tts, err := setupService(
-		ctx.Context,
-		getDefaultLogger(ctx.Int("log-level")),
-		ctx.String("listen-port"),
-		ctx.String("tastyworks-endpoint"),
-		ctx.String("session-token"),
-		ctx.String("dxfeed-endpoint"),
-		ctx.String("streamer-token"),
-		true,
-		ctx.String("database"),
-		ctx.String("nats-url"),
-		ctx.String("nats-auth-user"),
-		ctx.String("nats-auth-password"),
-		ctx.String("nats-godxfeed-user"),
-		ctx.String("nats-godxfeed-password"),
-		ctx.String("nats-nkey-seed"),
-		ctx.Bool("dev-mode"),
-	)
+	if err := requireFlags(ctx,
+		"tastyworks-endpoint",
+		"tw-oauth-token-url",
+		"tw-oauth-client-secret",
+		"tw-oauth-refresh-token",
+		"symbol",
+	); err != nil {
+		return err
+	}
+	tts, err := setupServiceForDataCmd(ctx)
 	if err != nil {
 		return err
 	}

@@ -73,35 +73,13 @@ func handleTestBearerToken(s service.Service) http.HandlerFunc {
 	}
 }
 
-func handleTestSessionToken(s service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		st := r.URL.Query().Get("session-token")
-		if st == "" {
-			writeBadRequestError(w, fmt.Errorf("must supply session-token"))
-			return
-		}
-		twr, err := s.TestSessionToken(st)
-		writeServiceResponse(s, w, twr, err)
-	}
-}
-
-func handleNewSessionToken(s service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		u := r.URL.Query()["username"][0]
-		p := r.URL.Query()["password"][0]
-		twr, err := s.NewSessionToken(u, p)
-		writeServiceResponse(s, w, twr, err)
-	}
-}
-
 func handleNewStreamerToken(s service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		st := r.URL.Query().Get("session-token")
-		if st == "" {
-			writeBadRequestError(w, fmt.Errorf("must supply session-token"))
+		td, err := s.NewStreamerToken(r.Context())
+		if err != nil {
+			writeInternalError(s, w, err)
 			return
 		}
-		twr, err := s.NewStreamerToken()
-		writeServiceResponse(s, w, twr, err)
+		writeJSONResponse(w, td, http.StatusOK)
 	}
 }

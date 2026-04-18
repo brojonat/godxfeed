@@ -1,6 +1,6 @@
 module github.com/brojonat/godxfeed
 
-go 1.23.0
+go 1.25.0
 
 require (
 	github.com/brojonat/server-tools v0.0.0-20240920030209-e23e4a79a3ed
@@ -72,7 +72,7 @@ require (
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.32.0 // indirect
 	golang.org/x/exp v0.0.0-20231127185646-65229373498e // indirect
-	golang.org/x/sync v0.10.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/time v0.9.0 // indirect

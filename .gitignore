@@ -4,3 +4,5 @@ cli
 .vscode
 todo.txt
 dumps
+logs/
+artifacts/

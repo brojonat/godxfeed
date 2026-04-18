@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,15 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	dx "github.com/brojonat/godxfeed/dxclient"
 	"github.com/brojonat/godxfeed/service/api"
-	"github.com/brojonat/godxfeed/service/db/dbgen"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
-	"go.temporal.io/sdk/client"
 )
 
 func addDefaultHeaders(h http.Header) {
@@ -49,86 +43,37 @@ func getSymbologyURL(endpoint, symType, sym string) (string, error) {
 	return base, nil
 }
 
+// Service is the business-logic surface the HTTP and CLI layers consume.
+// It deliberately stays small: tastytrade REST + the dxLink-to-NATS ingress
+// path. Persistence lives in `service/analytics` sinks that subscribe to
+// NATS independently.
 type Service interface {
-	// Log logs a message.
 	Log(level int, m string, args ...any)
-	// TemporalClient returns a Temporal client. N.B.: under certain
-	// circumstances, callers may choose to initialize the service without a
-	// Temporal client, in which case this will return nil.
-	TemporalClient() client.Client
-	// DBPool returns a *pgxpool.Pool. This is useful if you need to perform a
-	// query that needs a transaction. N.B.: under certain circumstances,
-	// callers may choose to initialize the service without a DB connection, in
-	// which case this will return nil.
-	DBPool() *pgxpool.Pool
-	// DBQ returns a *dbgen.Queries. This is the main interface to the DB. N.B.:
-	// under certain circumstances, callers may choose to initialize the service
-	// without a DB connection, in which case this will return nil.
-	DBQ() *dbgen.Queries
-	// NATS returns a *nats.Conn. This is the main interface to the NATS
-	// server. N.B.: under certain circumstances, callers may choose to initialize
-	// the service without a NATS connection, in which case this will return nil.
 	NATS() *nats.Conn
 
-	// NewSessionToken returns a new session token from the TastyTrade API.
-	NewSessionToken(username string, password string) (*api.Response, error)
-	// Tests the provided session token against the TastyTrade API.
-	TestSessionToken(sessionToken string) (*api.Response, error)
-	// Returns a token that can be used with the dxfeed streaming API.
-	NewStreamerToken() (*api.Response, error)
-	// Returns all the metadata for the symbol from the TastyTrade API.
-	GetSymbolData(symbol string, symbolType string) (*api.Response, error)
-	// Returns the option chain for the symbol from the TastyTrade API.
+	// Tastytrade REST.
+	NewStreamerToken(ctx context.Context) (api.TokenData, error)
+	GetSymbolData(symbol, symbolType string) (*api.Response, error)
 	GetOptionChain(symbol string) (*api.Response, error)
-	// Returns all related symbols for the provided symbol.
 	GetRelatedOptionSymbols(symbol string) ([]string, error)
-	// Returns the metadata for the provided equity symbol AND all related
-	// option symbols that are fectched by calling the provided method. This package
-	// Exports two helper factory methods:
-	//
-	// - "RelatedN": callback fetches the first n related symbols from the TastyTrade API.
-	// NOTE: you can call this with 0 if you want to stream a single symbol and not
-	// any related symbols.
 	GetStreamSymbols(symbol string, method func(string) ([]string, error)) ([]string, error)
 
-	// Returns a channel that emits APIFeedCompactQuoteData updates for the
-	// supplied symbols. This should only be invoked ONCE per service instance
-	// since it generally requires a new websocket connection to the dxfeed
-	// streaming API.
-	StreamAPIFeedCompactQuoteData(ctx context.Context, syms []string) (<-chan []api.FeedCompactQuote, error)
+	// StartIngress dials dxLink, authenticates, subscribes to the initial
+	// symbols, and begins publishing FEED_DATA events to NATS. Safe to call
+	// once per service instance. Registers each symbol in the
+	// SubscriptionManager.
+	StartIngress(ctx context.Context, symbols []string) error
 
-	// StreamHistoricalSymbolData writes the historical data for the provided symbol to
-	// NATS.
-	StreamHistoricalSymbolData(ctx context.Context, symbol string) error
-
-	// RecordSymbolData writes the symbol data to the database.
-	RecordSymbolData(data []byte) (int64, error)
-	// PublishSymbolData publishes the symbol data to NATS.
-	PublishSymbolData(data []byte) error
-
-	// StartSymbolStream starts a new symbol stream for the provided symbol.
-	StartSymbolStream(symbol string) error
-	// StopSymbolStream stops streaming for the provided symbol.
-	StopSymbolStream(symbol string)
-	// StopAllStreams stops all streams.
-	StopAllStreams()
-
-	// IsSymbolStreamActive returns true if the symbol is currently being streamed
-	IsSymbolStreamActive(symbol string) bool
+	// Subscriptions returns the current dxLink subscription state snapshot.
+	Subscriptions() []SubscriptionInfo
+	// DXLinkStatus returns the connection state of the dxLink WebSocket.
+	DXLinkStatus() DXLinkStatus
 }
 
 // SymbolMethodNRelatedOptions returns a callback that fetches the first n
-// related option symbols from the TastyTrade API. If called with 0, this
-// returns immediately. This is useful if you want to stream a single symbol and
-// n of its related symbols. Note that you should limit the number of symbols
-// you request to avoid overwhelming the TastyTrade API (or rather, the number
-// of symbols you subscribe to at once). I've tested this with up to 50 symbols
-// and it works fine, Maybe you can go higher but I haven't tested it. If you
-// need more than 50 symbols, you may want to consider spinning up multiple
-// service instances of the service (or otherwise implement a service that
-// supports multiple connections). When that time comes, you'll likely want to
-// implement your own symbol fetching method(s) so that you can more precisely
-// page through the results. You can follow this pattern as an example.
+// related option symbols. Call with 0 to stream a single symbol only. See
+// GetRelatedOptionSymbols for the tastytrade-side ordering (sorted by
+// expiry then strike).
 func SymbolMethodNRelatedOptions(s Service, n int) func(string) ([]string, error) {
 	return func(symbol string) ([]string, error) {
 		if n < 1 {
@@ -146,109 +91,49 @@ func SymbolMethodNRelatedOptions(s Service, n int) func(string) ([]string, error
 }
 
 type service struct {
-	twEndpoint    string
-	sessionToken  string
-	dxEndpoint    string
-	streamerToken string
-	logger        *slog.Logger
-	tc            client.Client
-	dbpool        *pgxpool.Pool
-	dbqueries     *dbgen.Queries
-	nats          *nats.Conn
+	twEndpoint string
+	dxEndpoint string
+	tp         TokenProvider
+	logger     *slog.Logger
+	nats       *nats.Conn
+	subs       *SubscriptionManager
 
-	// Add mutex to protect the streams map
-	streamsMu sync.RWMutex
-	// Map of symbol to cancel function for active streams
-	streams map[string]context.CancelFunc
-
-	// Add dx client fields
-	dxClientMu sync.RWMutex
-	dxClient   dx.Client
-	dxChan     <-chan dx.Message
+	// dxLink connection state. Everything inside here is guarded by dxMu.
+	dxMu      sync.RWMutex
+	dxClient  dx.Client
+	dxStatus  DXLinkStatus
 }
 
+// NewService constructs the service. Note the absence of a *pgxpool / DB
+// handle — persistence is delegated entirely to analytics sinks that have
+// their own connections.
 func NewService(
 	twEndpoint string,
-	sessionToken string,
 	dxEndpoint string,
-	streamerToken string,
+	tp TokenProvider,
 	l *slog.Logger,
-	tc client.Client,
-	p *pgxpool.Pool,
-	q *dbgen.Queries,
 	nc *nats.Conn,
 ) Service {
-	s := &service{
-		twEndpoint:    twEndpoint,
-		sessionToken:  sessionToken,
-		dxEndpoint:    dxEndpoint,
-		streamerToken: streamerToken,
-		logger:        l,
-		tc:            tc,
-		dbpool:        p,
-		dbqueries:     q,
-		nats:          nc,
-		streams:       make(map[string]context.CancelFunc),
+	return &service{
+		twEndpoint: twEndpoint,
+		dxEndpoint: dxEndpoint,
+		tp:         tp,
+		logger:     l,
+		nats:       nc,
+		subs:       NewSubscriptionManager(),
 	}
-	return s
 }
 
-// RecordSymbolData writes the symbol data to the database. Currently it
-// expects a slice of FeedCompactQuote objects, but this may change in the
-// future. It returns the number of rows inserted.
-func (s *service) RecordSymbolData(data []byte) (int64, error) {
-	s.Log(int(slog.LevelDebug), "recording symbol data", "data", string(data))
-	if s.DBQ() == nil {
-		return 0, nil
+// bearerAuth returns "Bearer <access_token>" for tastytrade API calls.
+func (s *service) bearerAuth(ctx context.Context) (string, error) {
+	if s.tp == nil {
+		return "", fmt.Errorf("oauth: service has no TokenProvider configured")
 	}
-
-	// parse from []byte to []dx.FeedCompactQuote
-	var fds []dx.FeedCompactQuote
-	if err := json.Unmarshal(data, &fds); err != nil {
-		return 0, fmt.Errorf("could not unmarshal feed data: %w", err)
+	tok, err := s.tp.AccessToken(ctx)
+	if err != nil {
+		return "", err
 	}
-
-	ts := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	inserts := []dbgen.InsertSymbolDataParams{}
-	for _, fd := range fds {
-		inserts = append(inserts, dbgen.InsertSymbolDataParams{
-			Symbol:   fd.EventSymbol,
-			Ts:       ts,
-			BidPrice: fd.BidPrice,
-			BidSize:  fd.BidSize,
-			AskPrice: fd.AskPrice,
-			AskSize:  fd.AskSize,
-		})
-	}
-	if len(data) == 0 {
-		return 0, nil
-	}
-	return s.DBQ().InsertSymbolData(context.Background(), inserts)
-}
-
-// PublishSymbolData publishes the symbol data to NATS. Currently it expects
-// a slice of FeedCompactQuote objects, but this may change in the future.
-func (s *service) PublishSymbolData(data []byte) error {
-	if s.NATS() == nil {
-		return nil
-	}
-	// parse from []byte to []dx.FeedCompactQuote
-	var fds []dx.FeedCompactQuote
-	if err := json.Unmarshal(data, &fds); err != nil {
-		return fmt.Errorf("could not unmarshal feed data: %w", err)
-	}
-
-	for i, fd := range fds {
-		b, err := json.Marshal(fd)
-		if err != nil {
-			return fmt.Errorf("could not marshal feed data: %w (skipping %d of %d)", err, len(fds)-i, len(fds))
-		}
-		err = s.NATS().Publish(fmt.Sprintf("godxfeed.%s", fd.EventSymbol), b)
-		if err != nil {
-			return fmt.Errorf("error publishing feed data: %w (skipping %d of %d)", err, len(fds)-i, len(fds))
-		}
-	}
-	return nil
+	return "Bearer " + tok, nil
 }
 
 func (s *service) Log(level int, msg string, args ...any) {
@@ -264,150 +149,22 @@ func (s *service) Log(level int, msg string, args ...any) {
 	}
 }
 
-func (s *service) TemporalClient() client.Client {
-	return s.tc
+func (s *service) NATS() *nats.Conn { return s.nats }
+
+func (s *service) Subscriptions() []SubscriptionInfo { return s.subs.Snapshot() }
+
+func (s *service) DXLinkStatus() DXLinkStatus {
+	s.dxMu.RLock()
+	defer s.dxMu.RUnlock()
+	return s.dxStatus
 }
 
-func (s *service) DBPool() *pgxpool.Pool {
-	return s.dbpool
-}
-
-func (s *service) DBQ() *dbgen.Queries {
-	return s.dbqueries
-}
-
-func (s *service) NATS() *nats.Conn {
-	return s.nats
-}
-
-func (s *service) NewSessionToken(u, p string) (*api.Response, error) {
-	url := fmt.Sprintf("https://%s/sessions", s.twEndpoint)
-	bdata := struct {
-		Login      string `json:"login"`
-		Password   string `json:"password"`
-		RememberMe bool   `json:"remember-me"`
-	}{
-		Login:      u,
-		Password:   p,
-		RememberMe: false,
-	}
-	b, err := json.Marshal(bdata)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not marshal request body: %w", api.ErrorBadRequest{Message: "bad request"}, err)
-	}
-
-	r, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(b))
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
-
-	}
-
-	addDefaultHeaders(r.Header)
-
-	res, err := http.DefaultClient.Do(r)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not do request: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-	defer res.Body.Close()
-
-	b, err = io.ReadAll(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not read response body: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-
-	var response api.Response
-	if err := json.Unmarshal(b, &response); err != nil {
-		return nil, fmt.Errorf("%w: could not parse response body: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-
-	switch res.StatusCode {
-	case http.StatusOK, http.StatusCreated:
-	default:
-		return nil, fmt.Errorf("%w: unexpected response: %s\n%s", api.ErrorInternal{Message: "internal error"}, res.Status, b)
-	}
-	return &response, nil
-}
-
-func (s *service) TestSessionToken(sessionToken string) (*api.Response, error) {
-	url := fmt.Sprintf("https://%s/customers/me", s.twEndpoint)
-	r, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-
-	addDefaultHeaders(r.Header)
-	r.Header.Add("Authorization", sessionToken)
-
-	res, err := http.DefaultClient.Do(r)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not do request: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-	defer res.Body.Close()
-
-	b, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not read response body: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-
-	var response api.Response
-	if err := json.Unmarshal(b, &response); err != nil {
-		return nil, fmt.Errorf("%w: could not parse response body: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-	switch res.StatusCode {
-	case http.StatusOK:
-	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("%w: %s\n%s", api.ErrorBadRequest{Message: "bad auth credentials"}, res.Status, b)
-	default:
-		return nil, fmt.Errorf("%w: unexpected response: %s\n%s", api.ErrorInternal{Message: "internal error"}, res.Status, b)
-	}
-	if response.Error.Code != "" {
-		return nil, fmt.Errorf("tastytrade error for session token query: %s", response.Error.Message)
-	}
-	return &response, nil
-}
-
-func (s *service) NewStreamerToken() (*api.Response, error) {
-	url := fmt.Sprintf("https://%s/api-quote-tokens", s.twEndpoint)
-	r, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-
-	addDefaultHeaders(r.Header)
-	r.Header.Add("Authorization", s.sessionToken)
-
-	res, err := http.DefaultClient.Do(r)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not do request: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-	defer res.Body.Close()
-
-	b, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("%w: could not read response body: %w", api.ErrorInternal{Message: "internal error"}, err)
-	}
-
-	var response api.Response
-	if err := json.Unmarshal(b, &response); err != nil {
-		return nil, fmt.Errorf("%w: could not parse response body: %w", api.ErrorInternal{Message: "internal error"}, err)
-
-	}
-	switch res.StatusCode {
-	case http.StatusOK:
-	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("%w: %s\n%s", api.ErrorBadRequest{Message: "bad auth credentials"}, res.Status, b)
-	default:
-		return nil, fmt.Errorf("%w: unexpected response: %s\n%s", api.ErrorInternal{Message: "internal error"}, res.Status, b)
-	}
-	if response.Error.Code != "" {
-		return nil, fmt.Errorf("tastytrade error for streamer token query: %s", response.Error.Message)
-	}
-	return &response, nil
+func (s *service) NewStreamerToken(ctx context.Context) (api.TokenData, error) {
+	return fetchStreamerToken(ctx, http.DefaultClient, "https://"+s.twEndpoint, s.tp)
 }
 
 // GetSymbolData returns the symbol data for the supplied symbol and symbol type.
-// Valid symbol types are "stock", "option", "future", and "index".
-// Symbol should be an equity symbol.
+// Valid symbol types are "crypto", "futures", "equities", "options", "futures-options".
 func (s *service) GetSymbolData(symbol, symbolType string) (*api.Response, error) {
 	sym := strings.ToUpper(symbol)
 	symType := strings.ToLower(symbolType)
@@ -420,7 +177,11 @@ func (s *service) GetSymbolData(symbol, symbolType string) (*api.Response, error
 		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
 	addDefaultHeaders(r.Header)
-	r.Header.Add("Authorization", s.sessionToken)
+	auth, err := s.bearerAuth(r.Context())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", api.ErrorInternal{Message: "internal error"}, err)
+	}
+	r.Header.Set("Authorization", auth)
 
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {
@@ -449,7 +210,11 @@ func (s *service) GetOptionChain(symbol string) (*api.Response, error) {
 		return nil, fmt.Errorf("%w: could not create request: %w", api.ErrorInternal{Message: "internal error"}, err)
 	}
 	addDefaultHeaders(r.Header)
-	r.Header.Add("Authorization", s.sessionToken)
+	auth, err := s.bearerAuth(r.Context())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", api.ErrorInternal{Message: "internal error"}, err)
+	}
+	r.Header.Set("Authorization", auth)
 
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {
@@ -460,9 +225,7 @@ func (s *service) GetOptionChain(symbol string) (*api.Response, error) {
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, fmt.Errorf("%w: could not read response body: %w", api.ErrorInternal{Message: "internal error"}, err)
-
 	}
-
 	var response api.Response
 	if err := json.Unmarshal(b, &response); err != nil {
 		return nil, fmt.Errorf("%w: could not parse response body: %w", api.ErrorInternal{Message: "internal error"}, err)
@@ -473,11 +236,9 @@ func (s *service) GetOptionChain(symbol string) (*api.Response, error) {
 	return &response, nil
 }
 
-// GetRelatedOptionSymbols returns the options symbols for the supplied equity symbol
-// sorted by days to expiry.
+// GetRelatedOptionSymbols returns the options streamer symbols for the
+// supplied equity symbol, sorted by (daysToExpiration, strikePrice).
 func (s *service) GetRelatedOptionSymbols(symbol string) ([]string, error) {
-
-	// get the option streamer symbols
 	twr, err := s.GetSymbolData(symbol, api.SYMBOL_TYPE_OPTIONS)
 	if err != nil {
 		return []string{}, fmt.Errorf("could not get option symbology data: %w", err)
@@ -488,7 +249,6 @@ func (s *service) GetRelatedOptionSymbols(symbol string) ([]string, error) {
 	if err := json.Unmarshal(twr.Data, &optsData); err != nil {
 		return []string{}, fmt.Errorf("could not unmarshal option symbol data: %w", err)
 	}
-	// sort options symbols by (expiry, strike)
 	sort.Slice(optsData.Items, func(i, j int) bool {
 		if optsData.Items[i].DaysToExpiration == optsData.Items[j].DaysToExpiration {
 			ival, err := strconv.ParseFloat(optsData.Items[i].StrikePrice, 64)
@@ -513,7 +273,6 @@ func (s *service) GetRelatedOptionSymbols(symbol string) ([]string, error) {
 }
 
 func (s *service) GetStreamSymbols(symbol string, getRelateds func(string) ([]string, error)) ([]string, error) {
-	// get the equity streamer symbols
 	twr, err := s.GetSymbolData(symbol, api.SYMBOL_TYPE_EQUITIES)
 	if err != nil {
 		return []string{}, fmt.Errorf("could not get equity symbol data: %w", err)
@@ -532,244 +291,100 @@ func (s *service) GetStreamSymbols(symbol string, getRelateds func(string) ([]st
 	return syms, nil
 }
 
-// StreamAPIFeedCompactQuoteData connects to the DXLink websocket endpoint,
-// authenticates, and subscribes to the supplied symbols for quote data. It
-// returns a channel and an error. Consumers can range over the channel; it will
-// be closed when done reading data. All calls to this method use the same
-// underlying dxlink client, but each call makes a subscription call to the
-// dxlink server and creates a new channel to receive messages.
-func (s *service) StreamAPIFeedCompactQuoteData(ctx context.Context, syms []string) (<-chan []api.FeedCompactQuote, error) {
-	// Initialize dx client if not already done
-	s.dxClientMu.Lock()
-	if s.dxClient == nil {
-		cl := func(level int, msg string, args ...any) {
-			s.Log(level, msg, args...)
-		}
-		s.dxClient = dx.NewClient(cl)
-		dc, handlerID := s.dxClient.C()
-		s.dxChan = dc
-		s.logger.Info("dx client channel", "handlerID", handlerID)
-
-		fmt.Println("dialing dxlink", s.dxEndpoint)
-		err := s.dxClient.Dial(ctx, fmt.Sprintf("wss://%s", s.dxEndpoint), func(msg dx.MessageSetup) error {
-			fmt.Println("msg", msg)
-			return nil
-		})
-		if err != nil {
-			s.dxClientMu.Unlock()
-			return nil, fmt.Errorf("could not dial dxlink: %w", err)
-		}
-		err = s.dxClient.Authenticate(s.streamerToken)
-		if err != nil {
-			s.dxClientMu.Unlock()
-			return nil, fmt.Errorf("could not authenticate: %w", err)
-		}
+// StartIngress dials dxLink using a fresh streamer token, authenticates,
+// subscribes to the supplied symbols, and starts a goroutine that publishes
+// every incoming FEED_DATA event to NATS verbatim. Returns after the
+// connection is established; the loop runs until ctx is canceled.
+//
+// This is the ONLY path from dxLink to NATS. Downstream (DB persister, UI,
+// future Bayesian sidecar) are all NATS subscribers.
+func (s *service) StartIngress(ctx context.Context, symbols []string) error {
+	if s.nats == nil {
+		return fmt.Errorf("ingress: service has no NATS connection")
 	}
-	s.dxClientMu.Unlock()
 
-	// Subscribe to symbols. I *THINK* that the dxlink server symbol subscriptions
-	// are idempotent, so we don't need to handle that here. At some point we do
-	// need to handle the case where the server rejects a subscription (e.g.,
-	// too many subscriptions).
-	err := s.dxClient.Subscribe(syms)
+	s.dxMu.Lock()
+	if s.dxClient != nil {
+		s.dxMu.Unlock()
+		return fmt.Errorf("ingress: already started")
+	}
+
+	cl := func(level int, msg string, args ...any) { s.Log(level, msg, args...) }
+	s.dxClient = dx.NewClient(cl)
+
+	td, err := s.NewStreamerToken(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("could not subscribe to symbols: %w", err)
+		s.dxClient = nil
+		s.dxMu.Unlock()
+		return fmt.Errorf("ingress: get streamer token: %w", err)
+	}
+	dialURL := td.DXLinkURL
+	if dialURL == "" {
+		dialURL = "wss://" + s.dxEndpoint
+	}
+	s.Log(int(slog.LevelInfo), "dialing dxlink", "url", dialURL, "symbols", symbols)
+
+	if err := s.dxClient.Dial(ctx, dialURL, func(msg dx.MessageSetup) error {
+		s.Log(int(slog.LevelDebug), "dxlink setup reply", "msg", fmt.Sprintf("%+v", msg))
+		return nil
+	}); err != nil {
+		s.dxClient = nil
+		s.dxMu.Unlock()
+		return fmt.Errorf("ingress: dial dxlink: %w", err)
+	}
+	s.dxStatus.Connected = true
+	s.dxStatus.DXLinkURL = dialURL
+
+	if err := s.dxClient.Authenticate(td.Token); err != nil {
+		s.dxClient = nil
+		s.dxStatus = DXLinkStatus{}
+		s.dxMu.Unlock()
+		return fmt.Errorf("ingress: authenticate: %w", err)
+	}
+	s.dxStatus.Authenticated = true
+
+	if len(symbols) > 0 {
+		if err := s.dxClient.Subscribe(symbols); err != nil {
+			s.dxMu.Unlock()
+			return fmt.Errorf("ingress: subscribe to %v: %w", symbols, err)
+		}
+		// Assume Quote for now — matches the single event field set
+		// requested in dxclient.Subscribe. Phase 3 will broaden.
+		for _, sym := range symbols {
+			s.subs.Register("Quote", sym, subjectFor(sym))
+		}
 	}
 
-	// Get a new stream of feed messages (this is every message from the dxlink server
-	// for all subscriptions handled by this service instance). Then, in a separate
-	// goroutine, filter the FEED_DATA messages and send them down the streaming
-	// channel returned to the caller.
 	feed, _ := s.dxClient.C()
-	out := make(chan []api.FeedCompactQuote)
-	go func() {
-		defer close(out)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-feed:
-				if !ok {
-					return
-				}
-				fmt.Println("msg", msg)
-				feeds, err := FilterAPIFeedCompactQuoteData(msg)
-				if err != nil {
-					s.Log(int(slog.LevelError), "error filtering feed data: %v", err)
-					continue
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case out <- feeds:
-				}
-			}
-		}
-	}()
+	s.dxMu.Unlock()
 
-	return out, nil
-}
-
-// FilterAPIFeedCompactQuoteData filters the FEED_DATA message from the DXLink
-// server and returns a slice of api.FeedCompactQuote structs. Any other message
-// types will result in an error.
-func FilterAPIFeedCompactQuoteData(msg dx.Message) ([]api.FeedCompactQuote, error) {
-	m, err := msg.JSON()
-	if err != nil {
-		return nil, fmt.Errorf("could not unmarshal message: %w", err)
-	}
-
-	// NOTE: some numeric fields coming from dxfeed are set to "NaN", which will
-	// result in an error if we try to parse them. Fortunately, we can simply
-	// replace those bytes with a suitable zero value (i.e., 0).
-	m = bytes.ReplaceAll(m, []byte(`"NaN"`), []byte(`0.0`))
-
-	// {\"type\":\"FEED_DATA\",\"channel\":1,\"data\":[{\"eventType\":\"Quote\",\"eventSymbol\":\"SPY\",\"bidPrice\":576.39,\"askPrice\":576.42,\"bidSize\":185.0,\"askSize\":200.0}]}
-	var feedMsg dx.MessageFeedData
-	if err := json.Unmarshal(m, &feedMsg); err != nil {
-		return nil, fmt.Errorf("could not deserialize message (%w): %s", err, m)
-	}
-	var data []dx.FeedCompactQuote
-	if err := json.Unmarshal(feedMsg.Data, &data); err != nil {
-		return nil, fmt.Errorf("could not deserialize feed data (%w): %s", err, feedMsg.Data)
-	}
-
-	// parse the data into our own api.FeedCompactQuote struct
-	res := []api.FeedCompactQuote{}
-	for _, d := range data {
-		res = append(res, api.FeedCompactQuote{
-			FeedCompactQuote: dx.FeedCompactQuote{
-				AskPrice:    d.AskPrice,
-				AskSize:     d.AskSize,
-				BidPrice:    d.BidPrice,
-				BidSize:     d.BidSize,
-				EventSymbol: d.EventSymbol,
-				EventType:   d.EventType,
-			},
-			AskPriceTheo: 123,
-			BidPriceTheo: 789,
-		})
-	}
-	return res, nil
-}
-
-// StreamHistoricalSymbolData writes the historical data for the provided symbol to
-// NATS.
-func (s *service) StreamHistoricalSymbolData(ctx context.Context, symbol string) error {
-
-	// stream the historical data over NATS in a goroutine
-	go func() {
-
-		// first write all the preexisting historical data for this symbol to
-		// the channel
-		rows, err := s.DBQ().GetSymbolDataRaw(ctx, dbgen.GetSymbolDataRawParams{
-			Symregexp: symbol,
-			TsStart:   pgtype.Timestamptz{Time: time.Now().Add(-time.Hour * 24), Valid: true},
-			TsEnd:     pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		})
-		if err != nil {
-			s.Log(int(slog.LevelError), "Failed to get historical data", "symbol", symbol, "error", err)
-			return
-		}
-
-		histData := []api.FeedCompactQuote{}
-		for _, row := range rows {
-			histData = append(histData, api.FeedCompactQuote{
-				FeedCompactQuote: dx.FeedCompactQuote{
-					AskPrice:    float64(row.AskPrice),
-					AskSize:     float64(row.AskSize),
-					BidPrice:    float64(row.BidPrice),
-					BidSize:     float64(row.BidSize),
-					EventSymbol: row.Symbol,
-					EventType:   "QUOTE",
-				},
-			})
-		}
-
-		b, err := json.Marshal(histData)
-		if err != nil {
-			s.Log(int(slog.LevelError), "Failed to marshal historical data", "symbol", symbol, "error", err)
-		}
-		// maybe clear the stream?
-		s.PublishSymbolData(b)
-	}()
-
+	go s.runIngressLoop(ctx, feed)
 	return nil
 }
 
-// StartSymbolStream starts a new stream for the given symbol.
-// It returns an error if the stream cannot be started (in the future
-// I expect this will happen because we'll saturate our TastyTrade API
-// symbol subscription limit, but at that point we can just return a
-// response that tells the client to try again later (and maybe they'll
-// get a server that can handle more symbol subscriptions). Note that because
-// this publishes symbol data to the NATS server, it should only be called
-// once per symbol, so if have some other publisher publishing on the same
-// symbol, you may encounter unexpected behavior.
-func (s *service) StartSymbolStream(symbol string) error {
-	s.streamsMu.Lock()
-	defer s.streamsMu.Unlock()
-	ctx, cancel := context.WithCancel(context.Background())
-	s.streams[symbol] = cancel
-
-	// start the stream in a goroutine
-	go func() {
-		defer s.StopSymbolStream(symbol)
-
-		// get a feed channel and stream it
-		feeds, err := s.StreamAPIFeedCompactQuoteData(ctx, []string{symbol})
-		if err != nil {
-			s.Log(int(slog.LevelError), "Failed to start symbol stream", "symbol", symbol, "error", err)
+// runIngressLoop consumes dxLink messages and publishes FEED_DATA events to
+// NATS verbatim. Runs until ctx is canceled.
+func (s *service) runIngressLoop(ctx context.Context, feed <-chan dx.Message) {
+	for {
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
+		case msg, ok := <-feed:
+			if !ok {
 				return
-			case feed, ok := <-feeds:
-				if !ok {
-					return
-				}
-				b, err := json.Marshal(feed)
-				if err != nil {
-					s.Log(int(slog.LevelError), "Failed to marshal feed", "symbol", symbol, "error", err)
+			}
+			events, err := FeedEvents(msg)
+			if err != nil {
+				s.Log(int(slog.LevelError), "ingress: parse feed message", "err", err)
+				continue
+			}
+			for _, ev := range events {
+				if err := s.nats.Publish(ev.Subject, ev.Payload); err != nil {
+					s.Log(int(slog.LevelError), "ingress: publish", "subject", ev.Subject, "err", err)
 					continue
 				}
-				s.PublishSymbolData(b)
+				s.subs.Observe(ev.Event, ev.Symbol)
 			}
 		}
-	}()
-	return nil
-}
-
-// Add a method to stop streaming a symbol. If the symbol is not being streamed,
-// this method is a no-op.
-func (s *service) StopSymbolStream(symbol string) {
-	s.streamsMu.Lock()
-	defer s.streamsMu.Unlock()
-
-	if cancel, exists := s.streams[symbol]; exists {
-		cancel() // Cancel the context
-		delete(s.streams, symbol)
 	}
-}
-
-// Add a method to stop all streams
-func (s *service) StopAllStreams() {
-	s.streamsMu.Lock()
-	defer s.streamsMu.Unlock()
-
-	for symbol, cancel := range s.streams {
-		cancel()
-		delete(s.streams, symbol)
-	}
-}
-
-// IsSymbolStreamActive returns true if the symbol is currently being streamed
-func (s *service) IsSymbolStreamActive(symbol string) bool {
-	s.streamsMu.RLock()
-	defer s.streamsMu.RUnlock()
-	_, exists := s.streams[symbol]
-	return exists
 }

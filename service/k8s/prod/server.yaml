@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: godxfeed-backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: godxfeed-backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: godxfeed-backend
+  name: godxfeed-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: godxfeed-backend
+  template:
+    metadata:
+      labels:
+        app: godxfeed-backend
+    spec:
+      containers:
+      - image: "{{DOCKER_REPO}}{{CLI_IMG_TAG}}"
+        imagePullPolicy: Always
+        name: godxfeed-backend
+        envFrom:
+        - secretRef:
+            name: godxfeed-secret-server-envs
+        command: ["./cli"]
+        args: ["run", "http-server", "--minimal-setup"]
+      restartPolicy: Always
+      imagePullSecrets:
+      - name: regcred

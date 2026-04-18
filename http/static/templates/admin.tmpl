@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>godxfeed — admin</title>
+  <link rel="stylesheet" href="/static/css/admin.css">
+  <script>
+    const NATS_URL = "{{ .NATSURL }}";
+  </script>
+  <script type="module" src="{{ .Endpoint }}/static/js/admin.js"></script>
+</head>
+<body>
+  <header>
+    <h1>godxfeed — admin</h1>
+    <div id="status-card" class="status-card loading">
+      <div class="status-item"><span class="label">dxLink:</span> <span id="status-connected">…</span></div>
+      <div class="status-item"><span class="label">auth:</span> <span id="status-authed">…</span></div>
+      <div class="status-item"><span class="label">url:</span> <code id="status-url">…</code></div>
+      <div class="status-item"><span class="label">refreshed:</span> <time id="status-refreshed">…</time></div>
+    </div>
+  </header>
+
+  <section>
+    <h2>Subscriptions</h2>
+    <table id="subs-table">
+      <thead>
+        <tr>
+          <th>Event</th>
+          <th>Symbol</th>
+          <th>Subject</th>
+          <th class="num">Messages</th>
+          <th>First seen</th>
+          <th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody id="subs-body">
+        <tr class="empty"><td colspan="6">no subscriptions yet</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Live stream <span class="muted">(godxfeed.&gt;, last 100)</span></h2>
+    <div id="tail-controls">
+      <button id="tail-pause">Pause</button>
+      <button id="tail-clear">Clear</button>
+      <span id="tail-rate" class="muted">0 msg/s</span>
+    </div>
+    <pre id="tail" aria-live="polite"></pre>
+  </section>
+</body>
+</html>

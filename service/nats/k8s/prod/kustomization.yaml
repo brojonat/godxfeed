@@ -1,0 +1,12 @@
+resources:
+- server.yaml
+- configmap.yaml
+- storage.yaml
+- ingress.yaml
+
+secretGenerator:
+- name: nats-secrets
+  envs:
+  - ../../.env.prod
+  options:
+    disableNameSuffixHash: true

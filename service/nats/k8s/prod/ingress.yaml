@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nats-server-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "TCP"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - nats.godxlink.brojonat.com
+    secretName: nats-server-tls
+  rules:
+  - host: "nats.godxlink.brojonat.com"
+    http:
+      paths:
+      - pathType: Prefix
+        path: "/"
+        backend:
+          service:
+            name: nats-server
+            port:
+              number: 4222

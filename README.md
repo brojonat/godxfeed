@@ -1,319 +1,277 @@
-# godxlink
+# godxfeed
 
-FIXME: DO NOT COMMIT, I NEED TO PURGE THE MAKEFILE HISTORY BECAUSE I THINK I CHECKED IN MY CREDENTIALS
+Go-native client for the [dxFeed / dxLink](https://github.com/dxFeed/dxLink)
+WebSocket protocol, wrapped in an HTTP + NATS service that lets browsers
+(and whatever else you want to plug in) consume real-time tastytrade quotes.
 
-There's no Go client library for `dxfeed/dxlink` so I'm building this one.
+Requires a [tastytrade developer](https://developer.tastytrade.com/) account
+with an OAuth Personal Grant — see
+[How To: Authenticate with tastytrade](#how-to-authenticate-with-tastytrade-one-time-setup).
 
-Here's the reference [repo](https://github.com/dxFeed/dxLink).
+The server runs one dxLink WebSocket, parses `FEED_DATA` messages, and
+publishes each event to a NATS subject (`godxfeed.<SYMBOL>`). Everything
+downstream — the browser UI, the TimescaleDB writer, any future sidecar — is
+just a NATS subscriber. **NATS is the single source of truth.**
 
-This also assumes that you have a TastyTrade developer account setup. Check out the docs [here](https://developer.tastytrade.com/).
+## Architecture
 
-The main use case for this package is running an HTTP server that has an associated DXLink client. The DXLink client (i.e., in `dxclient`) runs as part of the server process and receives quote data. The server forwards it to subscribed browser clients over NATS. Clients can subscribe to the NATS stream and receive symbol data. Browser clients will typically plot this data in some way.
+```mermaid
+flowchart LR
+    subgraph Browser["Browser (web UI)"]
+        UI[D3 plots + /admin page]
+        JWT[(localStorage<br/>godxfeed JWT)]
+    end
 
-Additionally, the server is also responsible for writing the timeseries ticker data for a predefined set of symbols to TimescaleDB. This way, we can provide time series data for a given symbol over the course of it's existence. It will be interesting to see how the price of a contract evolves over time, and how it compares to the theoretical price of the contract. We'll capture both the bid and ask prices, and since the VIX is one of the symbols, we'll also be able to see how the "theoretical" price evolves over time.
+    subgraph GoServer["godxfeed HTTP server (:8080)"]
+        HTTP[HTTP handlers]
+        TP[TokenProvider<br/>refresh → access token<br/>cached + singleflight]
+        DX[dxLink ingress goroutine<br/>SETUP → AUTH → CHANNEL<br/>→ FEED_SUBSCRIPTION<br/>→ NATS publish]
+        SM[SubscriptionManager<br/>per-event msg counters]
+        CALLOUT[NATS auth callout<br/>JWT → scoped NATS user]
+    end
 
-## How To: HTTP Server
+    subgraph Sinks["Analytic sinks (service/analytics)"]
+        TSDB[(TimescaleDB sink<br/>symbol_bid_ask)]
+        FUTURE[(…any other<br/>DSN-registered sink)]
+    end
 
-Open a new terminal, and do:
+    subgraph NATS["NATS (:4222 / :4223 ws)"]
+        SUBJ[(godxfeed.&gt; subject tree)]
+        AUTH{{$SYS.REQ.USER.AUTH}}
+    end
 
-```bash
-make && make run-http-server
+    subgraph Tastytrade["tastytrade cloud"]
+        OAUTH["POST /oauth/token"]
+        QT["GET /api-quote-tokens"]
+        INSTR["GET /instruments, /option-chains"]
+        DXFEED["wss://tasty-openapi-ws.dxfeed.com/realtime"]
+    end
+
+    CLI[CLI<br/>cmd/godxfeed] -.boots.-> GoServer
+    ENV[(service/.env.dev<br/>TW_OAUTH_&ast;<br/>NATS_&ast;<br/>ANALYTIC_SINKS)] -.env.-> CLI
+
+    UI -->|Bearer JWT| HTTP
+    UI -->|WebSocket + JWT| NATS
+    NATS -->|callout request| AUTH
+    AUTH --> CALLOUT
+    CALLOUT -->|scoped NATS user| NATS
+    NATS -->|godxfeed.&gt; firehose| UI
+
+    HTTP --> TP
+    HTTP --> SM
+    TP -->|POST refresh_token| OAUTH
+    HTTP -->|Bearer access_token| QT
+    HTTP -->|Bearer access_token| INSTR
+    DX --> TP
+    DX -->|AUTH w/ streamer token| DXFEED
+    DXFEED -->|FEED_DATA events| DX
+    DX -->|publish raw event bytes| SUBJ
+    DX --> SM
+
+    SUBJ -->|godxfeed.&gt; subscribe| TSDB
+    SUBJ -->|godxfeed.&gt; subscribe| FUTURE
+
+    classDef svc fill:#1e3a5f,stroke:#4a9eff,color:#e6e6e6
+    classDef ext fill:#3a1e5f,stroke:#b46aff,color:#e6e6e6
+    classDef store fill:#1e5f3a,stroke:#6aff9e,color:#e6e6e6
+    class HTTP,TP,DX,NPUB,CALLOUT,SM svc
+    class OAUTH,QT,INSTR,DXFEED ext
+    class TSDB,FUTURE,SUBJ,AUTH,JWT,ENV store
 ```
 
-Ok, now you should have an HTTP server listening on `:8080`. For typical usage, you're good to go. However, you can also run a "minimal" version of the server that doesn't connect to any external entities (except the DB) with the `--minimal-setup` flag.
+**Key paths:**
+- **Auth chicken-and-egg:** the server bootstraps itself from OAuth creds in
+  `service/.env.dev` (`TW_OAUTH_CLIENT_SECRET`, `TW_OAUTH_REFRESH_TOKEN`).
+  Browsers authenticate separately via a godxfeed JWT minted from
+  `POST /token` (basic-auth gated by `SERVER_SECRET_KEY`).
+- **Two NATS identities on the server:** the Go process connects twice — once
+  as the app user (publishes `godxfeed.<SYMBOL>`) and once as the auth-callout
+  user (services `$SYS.REQ.USER.AUTH`). Browsers connect with their godxfeed
+  JWT; the callout exchanges it for a scoped NATS user allowed to subscribe
+  to `godxfeed.>`.
+- **NATS as single source of truth:** the dxLink ingress goroutine is the
+  **only** thing that publishes to `godxfeed.>`. TimescaleDB persistence, the
+  browser UI, and any future consumer (e.g. a Bayesian-σ sidecar) are all
+  independent NATS subscribers. No dual-path writes.
+- **Raw bytes end-to-end:** the ingress parses a dxLink `FEED_DATA` envelope
+  just enough to extract each event's `eventSymbol`, then publishes the raw
+  per-event JSON to NATS unmodified. Sinks and consumers re-parse whatever
+  fields they care about.
 
-Important flags:
-
-- `--listen-port`: Port to listen on (default: 8080)
-- `--minimal-setup`: Run server with minimal dependencies
-- `--log-level`: Set logging level (default: info)
-- `--max-symbol-count`: Maximum number of symbols to track
-- `--symbol-method-n-related`: Use related symbols method for symbol selection
-- `--handler-debug`: Enable debug logging for handlers
-- `--handler-persist`: Enable data persistence to database
-- `--handler-publish`: Enable publishing to NATS
-
-## How To: CLI
-
-### TL;DR: You have to set up the env every day (due to TastyTrade token expirations), and you can to that easily:
-
-```bash
-# First ensure the HTTP server is running (in another terminal)
-make && make-run-http-minimal
-
-# In a second terminal
-make refresh-env
-```
-
-IMPORTANT: remember if you're running commands from the CLI (like running the HTTP server "by hand" and not via the `Makefile`), then you'll want to set all the relevant environment variables in your shell's env.
+## How To: Dev Stack (tmux)
 
 ```bash
-export $(grep -v '^#' service/.env | xargs)
+make dev-up       # start nats + http server + dummy publisher in tmux session 'godxfeed-dev'
+make dev-attach   # attach
+make dev-down     # tear down (refuses if you're attached to the session)
+make dev-status   # show windows
 ```
 
-or you can do
+Logs are tee'd to `logs/http.log`, `logs/nats.log`, `logs/publisher.log` —
+`make tail-http-log` / `tail-nats-log` for convenience.
+
+The individual targets (`make run-nats-server`, `make run-http-dev`,
+`make run-nats-dummy-publisher`) can be run standalone if you'd rather drive
+the stack by hand.
+
+## How To: Authenticate with tastytrade (one-time setup)
+
+tastytrade deprecated username/password session auth on 2024-12-01. This
+project uses an **OAuth 2.0 Personal Grant** — mint long-lived credentials
+once in the tastytrade web UI and the server refreshes short-lived access
+tokens transparently.
+
+1. Log into [tastytrade](https://tastytrade.com) (use the sandbox at
+   `developer.cert.tastyworks.com` for dev).
+2. Open **OAuth Applications → Manage → Create Grant** and generate a
+   Personal Grant. Redirect URI can be anything plausible
+   (e.g. `http://localhost:8080/oauth/callback`) — it's never hit for a
+   Personal Grant.
+3. Copy `client_secret` and `refresh_token` into `service/.env.dev`:
+
+   ```bash
+   TW_OAUTH_TOKEN_URL=https://api.cert.tastyworks.com/oauth/token
+   TW_API_HOST=api.cert.tastyworks.com
+   TW_OAUTH_CLIENT_SECRET=...
+   TW_OAUTH_REFRESH_TOKEN=...
+   ```
+
+4. Sanity-check:
+
+   ```bash
+   make check-oauth   # -> {"token":"...","dxlink-url":"...","level":"..."}
+   ```
+
+For production, repeat in a prod grant and put values in `service/.env.prod`
+(URLs become `api.tastyworks.com`). `make env-prod` seeds `.env.prod` from
+`.env.dev` so you only have to edit the values that differ.
+
+## How To: Godxfeed JWT (for the web UI)
+
+Web UI clients authenticate to the HTTP server using a JWT issued by this
+project (separate from tastytrade). To mint one:
 
 ```bash
-set -o allexport && source service/.env && set +o allexport
+# Server must be running.
+make refresh-auth-token   # writes AUTH_TOKEN=... into service/.env.dev
 ```
 
-### Details, details...
-
-For most operations, you'll need a session token from TastyTrade, and for streaming DXLink data you'll also need a streamer token. These expire after 24 hours. Don't request too many of these or you'll risk getting blocked from the API. By default, the CLI will look for these under the `SESSION_TOKEN` and `STREAMER_TOKEN` envs, so set those however you'd like.
-
-First get a session token (this is the only time you need to type in sensitive information):
-
-```bash
-./cli admin get-session-token --env-file service/.env
-```
-
-This should automatically store the session token under `SESSION_TOKEN` in your .env file. Then get a streamer token and store _that_ under `STREAMER_TOKEN`:
-
-```bash
-./cli get-streamer-token --env-file service/.env
-```
-
-You'll then likely need to get a Bearer token. You need to run the HTTP server for this, but you can do (assuming you're running at least a minimal HTTP server):
-
-```bash
-./cli admin get-bearer-token --env-file service/.env
-```
-
-Remember, you can skip all of this with
-
-```bash
-make refresh-env
-set -o allexport && source service/.env && set +o allexport
-```
-
-Get in the habit of doing this since this file has a number of other envs you need to specify (e.g., connection strings, ports, keys, etc.).
+The CLI uses `GODXFEED_ADMIN_EMAIL` + `SERVER_SECRET_KEY` as basic-auth to
+`POST /token`. The JWT's `email` claim is set to `GODXFEED_ADMIN_EMAIL`.
 
 ## Web UI
 
-Open a browser at `http://localhost:8080`. You should be prompted for an authorization token. You can use the `BEARER_TOKEN` env. It will store this in your localStorage for subsequent authorization.
+Open `http://localhost:8080` and paste an `AUTH_TOKEN` when prompted. The
+token is stored in `localStorage` for subsequent visits.
 
-### Available Plots
+### Available pages
 
-The server provides several different plot types accessible through the browser:
+- **`/admin`** — subscription dashboard. Shows dxLink connection status, the
+  table of active `(event, symbol)` subscriptions with per-row message
+  counters, and a live tail of every message flowing through
+  `godxfeed.>` (100-line ring buffer, pause/clear/msg-rate controls).
+- **`/plots?plot_kind=dynamic_distribution&symbol=SYMBOL`** — D3 histogram +
+  area plot of the last 100 bid prices, updating in real time.
+- **`/plots?plot_kind=line_chart&symbol=SYMBOL`** — live line chart of
+  bid/ask over time.
+- **`/plots?plot_kind=options_grid&symbol=SYMBOL`** — options-chain grid.
+  **Status: work-in-progress.**
 
-1. **Options Grid** (`/plots?plot_kind=options_grid&symbol=SYMBOL`)
+## Analytic Sinks
 
-   - Displays options chain data in a grid format
-   - Shows calls and puts with their respective bid/ask prices
-   - Real-time updates available
+Persistence is pluggable via the `service/analytics` package. Each sink
+registers itself at init-time under a DSN scheme; the server builds as many
+as you give it on `--analytic-sink` (or the `ANALYTIC_SINKS` env).
 
-2. **Line Chart** (`/plots?plot_kind=line_chart&symbol=SYMBOL`)
+```bash
+./cli run http-server \
+    --analytic-sink postgres://user:pw@host/db   # TimescaleDB
+```
 
-   - Tracks price movements over time
-   - Interactive time series visualization
-   - Supports auto-updating
+Each sink opens its own NATS subscription to `godxfeed.>` and its own
+backend connection. A sink crash doesn't take down the server.
 
-3. **Ridgeline Plot** (`/plots?plot_kind=ridgeline&symbol=SYMBOL`)
+Writing a new sink:
+1. Create `service/analytics/<name>.go`.
+2. Implement `analytics.Sink` (`Name()` + `Start(ctx)`).
+3. `RegisterSink("<scheme>", factory)` in an `init()` block.
+4. Ship.
 
-   - Visualizes option price distributions across different strikes
-   - Shows density curves for price distributions
-   - Useful for analyzing price clustering
-
-4. **Dynamic Distribution** (`/plots?plot_kind=dynamic_distribution&symbol=SYMBOL`)
-   - Real-time price distribution changes
-   - Updates automatically as new data arrives
-   - Useful for monitoring price movement patterns
+Currently registered schemes: `postgres`, `postgresql` (TimescaleDB, writes
+to `symbol_bid_ask`).
 
 ## NATS Connectivity
 
-Browser clients connect to the NATS server using WebSocket transport. Here's how it works:
+Browsers connect over WebSocket and authenticate with their godxfeed JWT.
+The server's auth callout service translates the JWT into a scoped NATS
+user that can subscribe (but not publish) to `godxfeed.>`.
 
-1. **Connection Setup**:
+```javascript
+import { connect, tokenAuthenticator, StringCodec } from "nats.ws";
 
-   ```javascript
-   const nc = await connect({
-     servers: NATS_URL,
-     token: await getNatsToken(), // Gets token from localStorage
-   });
-   ```
+const nc = await connect({ servers: [NATS_URL], authenticator: tokenAuthenticator(jwt) });
+const sub = nc.subscribe("godxfeed.SPY");   // or "godxfeed.>" for the firehose
+const decoder = new StringCodec();
+for await (const m of sub) {
+  const event = JSON.parse(decoder.decode(m.data));
+  // {"eventType":"Quote","eventSymbol":"SPY","bidPrice":...,"askPrice":...}
+}
+```
 
-2. **Subscribe to Updates**:
+Message payloads are raw dxLink event JSON — whatever dxFeed sent, minus
+a byte-level `"NaN"`→`0.0` sanitization.
 
-   ```javascript
-   const sub = nc.subscribe("symbol.updates");
-   for await (const m of sub) {
-     const data = JSON.parse(m.data);
-     // Handle the update
-   }
-   ```
+Configuration envs:
 
-3. **Authentication**:
+- `NATS_URL` — app-side NATS URL (e.g. `nats://localhost:4222`)
+- `NATS_BROWSER_URL` — WebSocket URL the template renders into the UI
+  (e.g. `nats://localhost:4223`)
+- `NATS_AUTH_USER` / `NATS_AUTH_PASSWORD` — auth-callout connection creds
+- `NATS_GODXFEED_USER` / `NATS_GODXFEED_PASSWORD` — app connection creds
+- `NATS_NKEY_SEED` — nkey the callout uses to sign issued user JWTs
 
-   - Uses auth callout endpoint `/nats-auth-callout`
-   - Server validates bearer token and issues NATS token
-   - Client just needs to supply their regular Bearer JWT.
+> **Note:** the credentials in `service/nats/nats.conf` are test values.
+> Rotate them for `.env.prod` before deploying.
 
-4. **Data Format**:
-   - Updates are sent as JSON messages
-   - Include symbol, price, and timestamp information
-   - Can be filtered by symbol on the client side
+## Admin/Observability endpoints
 
-The NATS browser URL is configurable through the `NATS_BROWSER_URL` environment variable.
+All bearer-gated:
+
+- `GET /dxlink/status` → `{connected, authenticated, dxlinkURL}`
+- `GET /dxlink/subscriptions` → `[{event, symbol, subject, msgCount, firstSeenAt, lastSeenAt}]`
+- `GET /ping` → sanity check
+- `GET /streamer-token` → fetches a fresh dxFeed streamer token via the
+  service's OAuth flow (useful for debugging)
 
 ## Payment/Subscriptions
 
-All auth is handled via JWT. How do clients get that JWT to begin with? We send it them in an email after they pay us. It expires in XX days (depending on how much they paid us.) How do we know they've paid us? We have a webhook for BuyMeACoffee payments! We extract their email and payment amount from the payload and send them an email with the API token. If they lose it, too bad (we'll be clear about that in the email).
+The web UI bearer JWT is issued in response to [BuyMeACoffee](https://buymeacoffee.com)
+payments. The webhook handler at `POST /webhook/buy-me-a-coffee`:
 
-Here's some important details about the webhook handler:
+1. Validates the BMC signature.
+2. Issues a JWT whose TTL scales with the payment amount
+   (1 coffee = 30 days, 3 = 90 days, 5+ = 180 days).
+3. Emails the JWT to the payer via SendGrid.
 
-1. **Endpoint**: `/webhook/buy-me-a-coffee`
+JWTs are single-use per transaction; no resend / refresh / extend path.
 
-   - Accepts POST requests
-   - Expects JSON payload with email, amount, and message
-   - No authentication required (uses BuyMeACoffee's webhook signature for validation)
+## Deployment
 
-2. **Payment Tiers**:
+The service is designed to run on Kubernetes. After `make env-prod` seeds
+`service/.env.prod`:
 
-   - Basic Access (1 coffee): 30-day access
-   - Premium Access (3 coffees): 90-day access
-   - Enterprise Access (5+ coffees): 180-day access
+```bash
+make docker-build
+DOCKER_REPO=<registry> CLI_IMG_TAG=<tag> make k8s-deploy-prod
+make k8s-status
+make k8s-logs
+```
 
-3. **Process Flow**:
+NATS deploys separately via `make k8s-deploy-nats` with the manifests in
+`service/nats/k8s/prod/`.
 
-   - Webhook receives payment notification
-   - Validates webhook signature
-   - Generates JWT based on payment amount
-   - Sends email with JWT and usage instructions
-   - Stores transaction details for audit purposes
+## Bookkeeping docs
 
-4. **Security Notes**:
-
-   - JWTs cannot be refreshed or extended
-   - One JWT per payment transaction
-   - Email delivery is best-effort (no resends)
-
-5. **API Access**:
-   - JWT must be included in Authorization header
-   - Format: `Authorization: Bearer <token>`
-   - Token expiry is based on payment tier
-   - No trial or free tier available (unless I send you a token manually).
-
-## Setting up the Development Environment
-
-Here's the external services you need to run:
-
-1. **Database (TimescaleDB)**:
-
-   - Install TimescaleDB (PostgreSQL extension)
-   - Create database and configure connection string in `.env`
-   - Required for storing time series ticker data
-
-2. **Ngrok Proxy**:
-
-   - Install Ngrok for webhook testing
-   - Use the Ngrok URL as your webhook endpoint for testing
-   - Set up a fixed domain in your Ngrok account
-   - Run: `ngrok http 8080` or with a fixed domain:
-     ```bash
-     ngrok http --domain your-domain.ngrok.app 8080
-     ```
-   - Ngrok domain env can be used like:
-     ```bash
-     ngrok http --domain ${NGROK_DOMAIN} 8080
-     ```
-
-3. **NATS Server**:
-
-   - Install and run NATS server
-   - Configure `NATS_BROWSER_URL` and other NATS-related env variables
-   - Required for real-time data streaming to browser clients
-   - You can run the nats server with:
-
-   ```bash
-   nats-server -c service/nats.conf
-   ```
-
-4. **NATS Dummy Publisher**:
-
-   - Useful for testing and development without live market data
-   - Publishes simulated market data to NATS
-   - Run with:
-     ```bash
-     make make-nats-dummy-publisher
-     ```
-   - Generates random quotes for SPY every 150ms
-   - Data format matches production:
-     ```javascript
-     {
-       "eventSymbol": "SPY",
-       "bidPrice": 100.00,
-       "askPrice": 100.10,
-       "bidSize": 100,
-       "askSize": 100,
-       "eventType": "quote"
-     }
-     ```
-   - Perfect for:
-     - Testing plot functionality
-     - UI development
-     - Integration testing
-     - Local development without market access
-
-5. **TastyTrade Account**:
-
-   - Sign up for a TastyTrade developer account
-   - Get your API credentials
-   - Set up `TW_USERNAME` and `TW_PASSWORD` in your environment
-
-6. **Development Tools**:
-
-   - Go development environment
-   - Make utility (for running Makefile commands)
-   - Git for version control
-
-7. **Environment Variables**:
-
-   - Copy `service/.env.example` to `service/.env` (if available)
-   - Configure all required environment variables
-   - Use `export $(grep -v '^#' service/.env | xargs)` to load them
-
-8. **Build and Run**:
-   - Run `make` to build and start the HTTP server
-   - Server will be available on port 8080 by default
-   - Use `--minimal-setup` flag for testing without external dependencies
-
-## Authentication and Navigation
-
-The web UI uses a token-based authentication system with the following flow:
-
-1. **Initial Authentication**:
-
-   - User is prompted for API token on first visit
-   - Token is stored in browser's localStorage
-   - All API requests include token in Authorization header
-
-2. **Page Navigation**:
-
-   - Token is temporarily passed as URL parameter during navigation
-   - Receiving page immediately:
-     - Extracts token from URL
-     - Stores it in localStorage
-     - Removes token from URL
-   - This maintains authentication state across page navigation
-   - Example flow:
-
-     ```javascript
-     // User clicks link to plot
-     /plots?plot_kind=line_chart&symbol=SPY&token=xxx
-
-     // Page loads and immediately cleans URL to
-     /plots?plot_kind=line_chart&symbol=SPY
-     ```
-
-3. **Security Notes**:
-
-   - Token is only briefly exposed in URL during navigation
-   - Token is immediately removed from URL to prevent accidental sharing
-   - All subsequent API requests use proper Authorization headers
-   - No tokens are stored in browser history
-
-4. **Session Management**:
-   - Logout clears token from localStorage
-   - Invalid tokens trigger re-authentication
-   - Token verification occurs on every page load
-   - Failed authentication redirects to login modal
+- [`TODO.md`](./TODO.md) — tracked work.
+- [`CHANGELOG.md`](./CHANGELOG.md) — append-only history of notable changes.
+- [`LEARNINGS.md`](./LEARNINGS.md) — pitfalls worth remembering.

@@ -8,242 +8,103 @@ import (
 	"os"
 	"strings"
 
+	"github.com/brojonat/godxfeed/service"
 	"github.com/urfave/cli/v2"
 )
 
+// new_bearer_token requests a godxfeed (not tastytrade) bearer JWT from the
+// HTTP server's POST /token endpoint using basic auth, and writes it to the
+// supplied env file as AUTH_TOKEN.
 func new_bearer_token(ctx *cli.Context) error {
+	if err := requireFlags(ctx, "godxfeed-endpoint", "email", "server-secret"); err != nil {
+		return err
+	}
 	r, err := http.NewRequest("POST", fmt.Sprintf("%s/token", ctx.String("godxfeed-endpoint")), nil)
 	if err != nil {
 		return err
 	}
-	r.SetBasicAuth(ctx.String("username"), ctx.String("password"))
+	r.SetBasicAuth(ctx.String("email"), ctx.String("server-secret"))
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	// Parse the JSON response
-	type TokenResponse struct {
+	var tokenResp struct {
 		Token string `json:"token"`
 	}
-
-	var tokenResp TokenResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	// Get env file path from context
-	envFile := ctx.String("env-file")
-	if envFile != "" {
-		// Read existing .env file
-		content, err := os.ReadFile(envFile)
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to read .env file: %w", err)
-		}
-
-		// Update or append AUTH_TOKEN using parsed token
-		lines := strings.Split(string(content), "\n")
-		found := false
-		for i, line := range lines {
-			if strings.HasPrefix(line, "AUTH_TOKEN=") {
-				lines[i] = fmt.Sprintf("AUTH_TOKEN=%s", tokenResp.Token)
-				found = true
-				break
-			}
-		}
-		if !found {
-			lines = append(lines, fmt.Sprintf("AUTH_TOKEN=%s", tokenResp.Token))
-		}
-
-		// Write back to .env file
-		err = os.WriteFile(envFile, []byte(strings.Join(lines, "\n")), 0644)
-		if err != nil {
-			return fmt.Errorf("failed to write .env file: %w", err)
-		}
-		fmt.Printf("Bearer token written to %s\n", envFile)
-	}
-	return nil
-}
-
-func new_session_token(ctx *cli.Context) error {
-	tts, err := setupService(
-		ctx.Context,
-		getDefaultLogger(ctx.Int("log-level")),
-		ctx.String("listen-port"),
-		ctx.String("tastyworks-endpoint"),
-		ctx.String("session-token"),
-		ctx.String("dxfeed-endpoint"),
-		ctx.String("streamer-token"),
-		true,
-		ctx.String("database"),
-		ctx.String("nats-url"),
-		ctx.String("nats-auth-user"),
-		ctx.String("nats-auth-password"),
-		ctx.String("nats-godxfeed-user"),
-		ctx.String("nats-godxfeed-password"),
-		ctx.String("nats-nkey-seed"),
-		ctx.Bool("dev-mode"),
-	)
-	if err != nil {
-		return err
-	}
-
-	// Get the session token
-	resp, err := tts.NewSessionToken(ctx.String("username"), ctx.String("password"))
-	if err != nil {
-		return err
-	}
-
-	// Parse the JSON response
-	type User struct {
-		Email       string `json:"email"`
-		ExternalID  string `json:"external-id"`
-		IsConfirmed bool   `json:"is-confirmed"`
-		Username    string `json:"username"`
-	}
-
-	type SessionResponse struct {
-		User struct {
-			User
-		} `json:"user"`
-		SessionExpiration string `json:"session-expiration"`
-		SessionToken      string `json:"session-token"`
-	}
-
-	var sessionResp SessionResponse
-	if err := json.Unmarshal([]byte(resp.Data), &sessionResp); err != nil {
-		return fmt.Errorf("failed to parse session response: %w", err)
-	}
-
-	// Use sessionResp.SessionToken instead of raw resp
-	envFile := ctx.String("env-file")
-	if envFile != "" {
-		// Read existing .env file
-		content, err := os.ReadFile(envFile)
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to read .env file: %w", err)
-		}
-
-		// Update the SESSION_TOKEN with parsed token
-		lines := strings.Split(string(content), "\n")
-		found := false
-		for i, line := range lines {
-			if strings.HasPrefix(line, "SESSION_TOKEN=") {
-				lines[i] = fmt.Sprintf("SESSION_TOKEN=%s", sessionResp.SessionToken)
-				found = true
-				break
-			}
-		}
-		if !found {
-			lines = append(lines, fmt.Sprintf("SESSION_TOKEN=%s", sessionResp.SessionToken))
-		}
-
-		// Write back to .env file
-		err = os.WriteFile(envFile, []byte(strings.Join(lines, "\n")), 0644)
-		if err != nil {
-			return fmt.Errorf("failed to write .env file: %w", err)
-		}
-		fmt.Printf("Session token written to %s\n", envFile)
-	}
-	return nil
-}
-
-func dxlink_api_token(ctx *cli.Context) error {
-	// Get the session token from env file if env-file is provided
-	sessionToken := ctx.String("session-token")
-	if envFile := ctx.String("env-file"); envFile != "" {
-		content, err := os.ReadFile(envFile)
-		if err != nil {
-			return fmt.Errorf("failed to read .env file: %w", err)
-		}
-
-		lines := strings.Split(string(content), "\n")
-		for _, line := range lines {
-			if strings.HasPrefix(line, "SESSION_TOKEN=") {
-				sessionToken = strings.TrimPrefix(line, "SESSION_TOKEN=")
-				break
-			}
-		}
-	}
-
-	tts, err := setupService(
-		ctx.Context,
-		getDefaultLogger(ctx.Int("log-level")),
-		ctx.String("listen-port"),
-		ctx.String("tastyworks-endpoint"),
-		sessionToken,
-		ctx.String("dxfeed-endpoint"),
-		ctx.String("streamer-token"),
-		true,
-		ctx.String("database"),
-		ctx.String("nats-url"),
-		ctx.String("nats-auth-user"),
-		ctx.String("nats-auth-password"),
-		ctx.String("nats-godxfeed-user"),
-		ctx.String("nats-godxfeed-password"),
-		ctx.String("nats-nkey-seed"),
-		ctx.Bool("dev-mode"),
-	)
-	if err != nil {
-		return err
-	}
-	resp, err := tts.NewStreamerToken()
-	if err != nil {
-		return err
-	}
-
-	// Get env file path from context
 	envFile := ctx.String("env-file")
 	if envFile == "" {
-		return writeCLIResponse(resp, err)
+		fmt.Printf("%s\n", body)
+		return nil
 	}
+	if err := upsertEnv(envFile, "AUTH_TOKEN", tokenResp.Token); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "AUTH_TOKEN written to %s\n", envFile)
+	return nil
+}
 
-	// Read existing .env file
-	content, err := os.ReadFile(envFile)
+// get_streamer_token obtains a dxFeed streamer token from tastytrade using the
+// OAuth Personal Grant credentials. Intended as a sanity check — the HTTP
+// server fetches its own streamer token on demand inside the stream pipeline.
+func get_streamer_token(ctx *cli.Context) error {
+	if err := requireFlags(ctx,
+		"tastyworks-endpoint",
+		"tw-oauth-token-url",
+		"tw-oauth-client-secret",
+		"tw-oauth-refresh-token",
+	); err != nil {
+		return err
+	}
+	tp, err := service.NewTokenProvider(service.OAuthConfig{
+		TokenURL:     ctx.String("tw-oauth-token-url"),
+		ClientSecret: ctx.String("tw-oauth-client-secret"),
+		RefreshToken: ctx.String("tw-oauth-refresh-token"),
+	})
+	if err != nil {
+		return fmt.Errorf("oauth config: %w", err)
+	}
+	baseURL := "https://" + ctx.String("tastyworks-endpoint")
+	td, err := service.FetchStreamerToken(ctx.Context, http.DefaultClient, baseURL, tp)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(td)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", b)
+	return nil
+}
+
+// upsertEnv replaces or appends `KEY=value` in the named env file.
+func upsertEnv(path, key, value string) error {
+	content, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read .env file: %w", err)
+		return fmt.Errorf("read %s: %w", path, err)
 	}
-
-	// Parse the JSON response
-	type StreamerResponse struct {
-		DxlinkURL string `json:"dxlink-url"`
-		ExpiresAt string `json:"expires-at"`
-		IssuedAt  string `json:"issued-at"`
-		Level     string `json:"level"`
-		Token     string `json:"token"`
-	}
-
-	var streamerResp StreamerResponse
-	if err := json.Unmarshal([]byte(resp.Data), &streamerResp); err != nil {
-		return fmt.Errorf("failed to parse streamer response: %w", err)
-	}
-
-	// Update or append STREAMER_TOKEN using parsed token
+	prefix := key + "="
 	lines := strings.Split(string(content), "\n")
 	found := false
 	for i, line := range lines {
-		if strings.HasPrefix(line, "STREAMER_TOKEN=") {
-			lines[i] = fmt.Sprintf("STREAMER_TOKEN=%s", streamerResp.Token)
+		if strings.HasPrefix(line, prefix) {
+			lines[i] = prefix + value
 			found = true
 			break
 		}
 	}
 	if !found {
-		lines = append(lines, fmt.Sprintf("STREAMER_TOKEN=%s", streamerResp.Token))
+		lines = append(lines, prefix+value)
 	}
-
-	// Write back to .env file
-	err = os.WriteFile(envFile, []byte(strings.Join(lines, "\n")), 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write env file: %w", err)
-	}
-	fmt.Printf("STREAMER_TOKEN written to %s\n", envFile)
-	return nil
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
 }

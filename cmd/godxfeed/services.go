@@ -2,80 +2,44 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
 	ghttp "github.com/brojonat/godxfeed/http"
 	"github.com/brojonat/godxfeed/service"
-	"github.com/brojonat/godxfeed/service/db/dbgen"
-	"github.com/brojonat/server-tools/stools"
-	"github.com/jackc/pgx/v5"
+	"github.com/brojonat/godxfeed/service/analytics"
+	_ "github.com/brojonat/godxfeed/service/analytics" // blank import to trigger timescale registration
 	"github.com/urfave/cli/v2"
 )
 
-// setupService creates a service instance.
-//
-// l: the logger to use
-// twEndpoint: the tastyworks endpoint to use
-// sessionToken: the session token to use
-// dxEndpoint: the dxfeed endpoint to use
-// streamerToken: the streamer token to use
-// minimalSetup: if true, the service will be initialized with minimal dependencies
+// setupService constructs the Service. The service no longer owns a DB
+// connection — persistence is delegated to analytics sinks configured via
+// --analytic-sink. Only NATS (for pub/sub + auth callout) and OAuth
+// (for tastytrade auth) are required in non-minimal mode.
 func setupService(
 	ctx context.Context,
 	l *slog.Logger,
 	listenPort string,
 	twEndpoint string,
-	sessionToken string,
 	dxEndpoint string,
-	streamerToken string,
+	oauthCfg service.OAuthConfig,
 	minimalSetup bool,
-	dbConn string,
 	natsURL string,
 	natsAuthUser string,
 	natsAuthPassword string,
 	natsGodxfeedUser string,
 	natsGodxfeedPassword string,
 	natsNkeySeed string,
-	devMode bool,
 ) (service.Service, error) {
+	tp, err := service.NewTokenProvider(oauthCfg)
+	if err != nil {
+		return nil, fmt.Errorf("oauth config: %w", err)
+	}
 
 	if minimalSetup {
 		l.Debug("initializing service with minimal dependencies")
-		tts := service.NewService(
-			twEndpoint,
-			sessionToken,
-			dxEndpoint,
-			streamerToken,
-			l, nil, nil, nil, nil)
-		return tts, nil
+		return service.NewService(twEndpoint, dxEndpoint, tp, l, nil), nil
 	}
-
-	// temporal
-	// if ctx.String("temporal-host") == "" {
-	// 	return nil, fmt.Errorf("must set temporal connection flag")
-	// }
-	// tc, err := client.Dial(client.Options{
-	// 	Logger:   l,
-	// 	HostPort: ctx.String("temporal-host"),
-	// })
-	// if err != nil {
-	// 	return nil, fmt.Errorf("could not initialize Temporal client: %w", err)
-	// }
-
-	// db
-	if dbConn == "" {
-		return nil, fmt.Errorf("must set database connection flag")
-	}
-	p, err := stools.GetConnPool(
-		ctx, dbConn,
-		func(ctx context.Context, c *pgx.Conn) error { return nil },
-	)
-	if err != nil {
-		return nil, fmt.Errorf("could not connect to db: %w", err)
-	}
-	q := dbgen.New(p)
 
 	appNC, err := service.SetupNatsWithAuthCallout(
 		ctx,
@@ -90,196 +54,128 @@ func setupService(
 	if err != nil {
 		return nil, fmt.Errorf("could not setup nats: %w", err)
 	}
-	tts := service.NewService(
-		twEndpoint,
-		sessionToken,
-		dxEndpoint,
-		streamerToken,
-		l, nil, p, q, appNC,
-	)
-	return tts, nil
+	return service.NewService(twEndpoint, dxEndpoint, tp, l, appNC), nil
 }
 
-// getSymbolDataHandlers returns a list of handlers that handle feed
-// data for a symbol. You can configure your handlers to record data, to not
-// record data, maybe just record some data, etc. This function may grow....very
-// large, but it's basically the entire implementation of the dxfeed handlers. Note
-// that the CLI ctx is used to configure the handlers. In the future, we can easily
-// be more dynamic with the handler selection here.
-//
-// Note that all handlers are OPT IN ONLY. Here are the supported flags:
-//
-// - handler-debug: if true, the debug handler will be added
-// - handler-persist: if true, the persist handler will be added
-func getSymbolDataHandlers(tts service.Service, ctx *cli.Context) []func([]byte) error {
-
-	// log all the data at a debug level
-	debug := func(b []byte) error {
-		tts.Log(int(slog.LevelDebug), "got symbol data", "data", fmt.Sprintf("%s\n", b))
-		return nil
-	}
-
-	// persist the data to the database
-	persist := func(b []byte) error {
-		// write the data to the database
-		count, err := tts.RecordSymbolData(b)
-		if err != nil {
-			tts.Log(
-				int(slog.LevelError),
-				"error inserting feed data into db",
-				"error", err.Error(),
-				"count", count,
-			)
-		}
-		return nil
-	}
-
-	// add handlers based on the CLI context
-	handlers := []func([]byte) error{}
-	if ctx.Bool("handler-debug") {
-		handlers = append(handlers, debug)
-	}
-	if ctx.Bool("handler-persist") {
-		handlers = append(handlers, persist)
-	}
-	return handlers
-}
-
-// serve_http is the main entry point for the CLI. It sets up the service,
-// gets the symbols, optionally runs the streamer (that may write to the DB and/or
-// publish to NATS) in a separate goroutine, and then finally runs the HTTP server.
-//
-// It returns an error if the service setup fails, or if the symbols cannot be
-// retrieved. It IS VALID to call this function with no symbols, in which case
-// the HTTP server will run but no data will be streamed. By default, the HTTP
-// server will run the services:
-//
-// - HTTP server
-// - Info logger
-// - NATS publisher (NATS connection is configured via the NATS_* flags)
-// - Database writer (database connection is configured via the database flag)
-//
-// You can run a minimal setup by setting the minimal-setup flag to true. This
-// will only run the HTTP server and not the other services except for the info
-// logger.
+// serve_http is the CLI entry point. It validates env, constructs the service,
+// fetches the symbol set to subscribe to, starts every configured analytics
+// sink as a NATS subscriber, kicks off the dxLink → NATS ingress goroutine,
+// and then serves the HTTP API.
 func serve_http(ctx *cli.Context) error {
+	required := []string{
+		"listen-port",
+		"tastyworks-endpoint",
+		"tw-oauth-token-url",
+		"tw-oauth-client-secret",
+		"tw-oauth-refresh-token",
+		"dxfeed-endpoint",
+	}
+	if !ctx.Bool("minimal-setup") {
+		required = append(required,
+			"nats-url",
+			"nats-auth-user",
+			"nats-auth-password",
+			"nats-godxfeed-user",
+			"nats-godxfeed-password",
+			"nats-nkey-seed",
+		)
+	}
+	if err := requireFlags(ctx, required...); err != nil {
+		return err
+	}
+
+	log := getDefaultLogger(ctx.Int("log-level"))
+
 	tts, err := setupService(
 		ctx.Context,
-		getDefaultLogger(ctx.Int("log-level")),
+		log,
 		ctx.String("listen-port"),
 		ctx.String("tastyworks-endpoint"),
-		ctx.String("session-token"),
 		ctx.String("dxfeed-endpoint"),
-		ctx.String("streamer-token"),
+		service.OAuthConfig{
+			TokenURL:     ctx.String("tw-oauth-token-url"),
+			ClientSecret: ctx.String("tw-oauth-client-secret"),
+			RefreshToken: ctx.String("tw-oauth-refresh-token"),
+		},
 		ctx.Bool("minimal-setup"),
-		ctx.String("database"),
 		ctx.String("nats-url"),
 		ctx.String("nats-auth-user"),
 		ctx.String("nats-auth-password"),
 		ctx.String("nats-godxfeed-user"),
 		ctx.String("nats-godxfeed-password"),
 		ctx.String("nats-nkey-seed"),
-		ctx.Bool("dev-mode"),
 	)
 	if err != nil {
 		return err
 	}
 
-	// Get symbols. Only streaming top SYMBOL_COUNT symbols for now; will have
-	// to chunk subscription calls in the future since they apparently limit the
-	// number you can subscribe to at once. See the documentation for SymbolMethodRelatedN
-	// for more information; you can follow that implementation as an example of how
-	// to implement your own symbol fetching method(s). One potential improvement
-	// would be to implement a method that extracts the related symbols from the
-	// CLI ctx so that callers may specify exact (preconfigured) sets of symbols.
-	symbols := ctx.StringSlice("symbols")
-	maxSymbolCount := ctx.Int("max-symbol-count")
-	if maxSymbolCount < 0 {
-		return fmt.Errorf("max-symbol-count must be greater than 0")
+	// Resolve the symbols to subscribe to. Empty is valid — it just means
+	// "boot the server but don't subscribe to anything yet" (useful when
+	// paired with the dummy publisher or a future POST /dxlink/subscriptions).
+	syms, err := resolveStreamSymbols(tts, ctx)
+	if err != nil {
+		return err
 	}
 
-	syms := []string{}
-	symbolMethod := ctx.String("symbol-method")
-	switch symbolMethod {
-	case "n-related":
-		if len(symbols) != 1 {
-			return fmt.Errorf("symbol method`n-related` requires exactly one symbol")
-		}
-		syms, err = tts.GetStreamSymbols(
-			symbols[0],
-			service.SymbolMethodNRelatedOptions(tts, ctx.Int("max-symbol-count")),
-		)
-		if err != nil {
-			return fmt.Errorf("could not get symbol data: %v", err)
-		}
-	default:
-		syms = symbols
-	}
-
-	// Get handlers that handle messages. You can configure your handlers
-	// depending on the CLI context! For example, you can configure your handlers
-	// to record data, to not record data, maybe just record some data, etc. See
-	// getSymbolDataHandlers for supported handler flags. Note that all handlers
-	// are OPT IN ONLY.
-	handlers := getSymbolDataHandlers(tts, ctx)
-
-	// if we're not in minimal setup mode, and we have handlers, then run a
-	// function that streams the symbols to the handlers we defined above.
-	// We can abstract this out into a function if we want to, but for now
-	// this is the only place we let anyone connect to the TastyWorks Streamer.
-	//
-	// If you need to handle panic recovery or other stateful errors, you can
-	// do so here, but for now that is out of scope. Also note that for the
-	// time being, we're only handling StreamAPIFeedCompactQuoteData (since
-	// that is what the Service currently makes available); any other message
-	// types are ignored.
+	// Start every configured analytic sink. Each one opens its own NATS
+	// subscription and backend connection and runs for the lifetime of the
+	// server. A sink failure doesn't take down the server — it just logs and
+	// exits.
 	if !ctx.Bool("minimal-setup") {
-		if len(handlers) > 0 {
-			go func() {
-				tts.Log(int(slog.LevelInfo), "setting up streamer", "symbols", syms)
-				c, err := tts.StreamAPIFeedCompactQuoteData(ctx.Context, syms)
-				if err != nil {
-					tts.Log(int(slog.LevelError), fmt.Sprintf("error setting up streamer: %s", err.Error()))
-					return
+		for _, dsn := range ctx.StringSlice("analytic-sink") {
+			sink, err := analytics.Build(ctx.Context, dsn, tts.NATS(), log)
+			if err != nil {
+				return fmt.Errorf("analytic-sink %q: %w", dsn, err)
+			}
+			go func(s analytics.Sink) {
+				log.Info("starting analytic sink", "name", s.Name())
+				if err := s.Start(ctx.Context); err != nil {
+					log.Error("analytic sink exited with error", "name", s.Name(), "err", err)
 				}
-				// for each feed update, call each handler
-				for quotes := range c {
-					// first serialize to bytes, since that's what the handler's API
-					// expects
-					b, err := json.Marshal(quotes)
-					if err != nil {
-						tts.Log(int(slog.LevelError), fmt.Sprintf("error marshalling quotes: %s", err.Error()))
-						continue
-					}
-					// now pass the bytes to each handler
-					for _, h := range handlers {
-						if err := h(b); err != nil {
-							tts.Log(int(slog.LevelError), fmt.Sprintf("error handling symbol: %s", err.Error()))
-						}
-					}
-				}
-			}()
+			}(sink)
+		}
+
+		// Start the dxLink → NATS ingress. If no symbols were configured,
+		// skip — StartIngress assumes at least one.
+		if len(syms) > 0 {
+			if err := tts.StartIngress(ctx.Context, syms); err != nil {
+				log.Error("failed to start ingress", "err", err)
+			}
 		}
 	}
 
-	// start the symbol streams
-	for _, sym := range syms {
-		err := tts.StartSymbolStream(sym)
-		if err != nil {
-			tts.Log(int(slog.LevelError), fmt.Sprintf("error starting symbol stream: %s", err.Error()))
-		}
-	}
-
-	// finally run the HTTP server
 	return ghttp.RunHTTPServer(
 		ctx.Context,
 		tts,
 		ctx.String("listen-port"),
 		ctx.String("tastyworks-endpoint"),
-		ctx.String("session-token"),
 		ctx.String("dxfeed-endpoint"),
-		ctx.String("streamer-token"),
 		ctx.String("nats-browser-url"),
 		ctx.Bool("dev-mode"),
 	)
+}
+
+// resolveStreamSymbols applies the --symbol-method strategy to the raw symbol
+// list from the CLI.
+func resolveStreamSymbols(tts service.Service, ctx *cli.Context) ([]string, error) {
+	symbols := ctx.StringSlice("symbols")
+	if ctx.Int("max-symbol-count") < 0 {
+		return nil, fmt.Errorf("max-symbol-count must be greater than or equal to 0")
+	}
+	switch ctx.String("symbol-method") {
+	case "n-related":
+		if len(symbols) != 1 {
+			return nil, fmt.Errorf("symbol method `n-related` requires exactly one symbol")
+		}
+		syms, err := tts.GetStreamSymbols(
+			symbols[0],
+			service.SymbolMethodNRelatedOptions(tts, ctx.Int("max-symbol-count")),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("could not get symbol data: %w", err)
+		}
+		return syms, nil
+	default:
+		return symbols, nil
+	}
 }

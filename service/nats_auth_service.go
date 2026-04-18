@@ -165,14 +165,17 @@ func SetupNatsWithAuthCallout(
 			return nil, fmt.Errorf("email not found in token claims")
 		}
 
-		// Assign Permissions (these users should only be able to read from the godxfeed topic)
+		// Assign Permissions: scope browser clients to read-only subscription
+		// of the godxfeed.> subject tree. Using `>` (multi-token wildcard)
+		// instead of `*` (single-token) lets future per-event-type subjects
+		// like godxfeed.quote.SPY work without re-minting the callout.
 		claims.Name = email
 		claims.Permissions = jwt.Permissions{
 			Pub: jwt.Permission{
 				Allow: jwt.StringList{},
 			},
 			Sub: jwt.Permission{
-				Allow: jwt.StringList{"godxfeed.*"},
+				Allow: jwt.StringList{"godxfeed.>"},
 			},
 		}
 		return claims, nil

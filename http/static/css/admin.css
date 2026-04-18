@@ -1,0 +1,92 @@
+:root { color-scheme: dark; }
+
+body {
+  font-family: -apple-system, system-ui, sans-serif;
+  background: #0f1419;
+  color: #e6e6e6;
+  margin: 0;
+  padding: 1.5rem 2rem;
+  max-width: 1100px;
+  margin-inline: auto;
+  line-height: 1.5;
+}
+
+h1 { margin: 0 0 1rem; font-size: 1.5rem; }
+h2 { font-size: 1.1rem; color: #7ed9b8; margin: 2rem 0 .5rem; border-bottom: 1px solid #2a313b; padding-bottom: .25rem; }
+.muted { color: #888; font-size: .85rem; font-weight: normal; }
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.status-card {
+  background: #1a1f26;
+  border: 1px solid #2a313b;
+  border-radius: 6px;
+  padding: .6rem 1rem;
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: .25rem 1rem;
+  font-size: 13px;
+}
+.status-card .label { color: #888; margin-right: .3em; }
+.status-card code { background: #0f1419; padding: 1px 6px; border-radius: 3px; }
+.status-card.connected { border-color: #2e6a45; }
+.status-card.degraded { border-color: #a44141; }
+
+.ok { color: #5ccf8b; }
+.bad { color: #ff6b6b; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+th, td {
+  padding: .4rem .6rem;
+  border-bottom: 1px solid #2a313b;
+  text-align: left;
+}
+th { color: #888; font-weight: 500; background: #1a1f26; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td code { font-size: 12px; background: #1a1f26; padding: 1px 4px; border-radius: 3px; }
+tr.empty td { color: #555; text-align: center; padding: 1rem; }
+
+#tail-controls {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin-bottom: .5rem;
+}
+#tail-controls button {
+  background: #1a2330;
+  color: #e6e6e6;
+  border: 1px solid #2a313b;
+  border-radius: 4px;
+  padding: .25rem .75rem;
+  font-size: 13px;
+  cursor: pointer;
+}
+#tail-controls button:hover { background: #243244; }
+#tail-controls button.active { background: #3a1f1f; border-color: #a44141; }
+
+#tail {
+  background: #0b0d10;
+  border: 1px solid #2a313b;
+  border-radius: 6px;
+  padding: .75rem;
+  height: 320px;
+  overflow-y: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+#tail .tail-line { border-bottom: 1px dashed #1a1f26; padding: 2px 0; }
+#tail .tail-line .subj { color: #9cc7ff; margin-right: .5em; }
+#tail .tail-line .ts { color: #666; margin-right: .5em; }
