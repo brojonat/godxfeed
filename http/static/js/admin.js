@@ -6,6 +6,7 @@ import {
 import { ensureValidToken, authenticatedFetch } from "./auth.js";
 import { AUTH_CONFIG } from "./config.js";
 import { showLoginModal } from "./modal.js";
+import { natsToObservable, startSymbolPlots } from "./admin_plots.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Poll loop for status + subscriptions tables. Every second we re-fetch
@@ -62,7 +63,7 @@ async function pollSubscriptions() {
 function renderSubscriptions(rows) {
   const body = document.getElementById("subs-body");
   if (!rows || rows.length === 0) {
-    body.innerHTML = `<tr class="empty"><td colspan="6">no subscriptions yet</td></tr>`;
+    body.innerHTML = `<tr class="empty"><td colspan="7">no subscriptions yet</td></tr>`;
     return;
   }
   body.innerHTML = rows
@@ -74,9 +75,64 @@ function renderSubscriptions(rows) {
         <td class="num">${r.msgCount.toLocaleString()}</td>
         <td>${fmtTime(r.firstSeenAt)}</td>
         <td>${fmtTime(r.lastSeenAt)}</td>
+        <td><button class="remove-sub" data-event="${escapeAttr(r.event)}" data-symbol="${escapeAttr(r.symbol)}">Remove</button></td>
       </tr>`
     )
     .join("");
+}
+
+// Wire up the add form and delegate clicks on the remove buttons. The
+// buttons are re-rendered on every poll tick, so delegation avoids having
+// to re-attach listeners.
+function wireSubscriptionControls() {
+  const form = document.getElementById("add-sub-form");
+  const statusEl = document.getElementById("add-sub-status");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const event = document.getElementById("add-event").value.trim() || "Quote";
+    const symbol = document.getElementById("add-symbol").value.trim();
+    if (!symbol) return;
+    statusEl.textContent = `adding ${symbol}…`;
+    try {
+      const r = await authenticatedFetch("/dxlink/subscriptions", null, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event, symbol }),
+      });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      statusEl.textContent = `added ${symbol}`;
+      document.getElementById("add-symbol").value = "";
+      pollSubscriptions();
+    } catch (err) {
+      statusEl.textContent = `error: ${err}`;
+    }
+  });
+
+  document.getElementById("subs-body").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button.remove-sub");
+    if (!btn) return;
+    const event = btn.dataset.event;
+    const symbol = btn.dataset.symbol;
+    btn.disabled = true;
+    btn.textContent = "removing…";
+    try {
+      const r = await authenticatedFetch("/dxlink/subscriptions", null, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event, symbol }),
+      });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      pollSubscriptions();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Remove";
+      console.error(`remove ${event}/${symbol} failed:`, err);
+    }
+  });
+}
+
+function escapeAttr(s) {
+  return String(s ?? "").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -140,6 +196,7 @@ function wireTailControls() {
 
 async function runAdmin() {
   wireTailControls();
+  wireSubscriptionControls();
   const token = await ensureValidToken();
 
   // Poll status / subscriptions in parallel on an interval.
@@ -150,19 +207,31 @@ async function runAdmin() {
     tickRate();
   }, POLL_INTERVAL_MS);
 
-  // Tail every message flowing through the godxfeed subject tree.
+  // Tail every message flowing through the godxfeed subject tree AND feed
+  // the per-symbol distribution plots. Both are driven by the same NATS
+  // connection but tap it via two separate subscriptions: the tail uses the
+  // classic async-iterator consumer, and the plots go through an rxjs
+  // pipeline (groupBy → scan → throttleTime) so re-renders coalesce without
+  // blocking the tail.
   try {
     const nc = await connect({
       servers: [NATS_URL],
       authenticator: tokenAuthenticator(token),
     });
-    const sub = nc.subscribe("godxfeed.>");
     const decoder = new StringCodec();
+
+    // Tail (unchanged — plain DOM append, ring buffer).
+    const tailSub = nc.subscribe("godxfeed.>");
     (async () => {
-      for await (const m of sub) {
+      for await (const m of tailSub) {
         pushTailLine(m.subject, decoder.decode(m.data));
       }
     })();
+
+    // Plots (rxjs-driven, per-symbol panels).
+    const msgs$ = natsToObservable(nc, "godxfeed.>", decoder);
+    const plotsContainer = document.getElementById("plots-grid");
+    startSymbolPlots(msgs$, plotsContainer);
   } catch (e) {
     console.error("NATS connect failed:", e);
   }

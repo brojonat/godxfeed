@@ -76,3 +76,12 @@ type FeedCompactQuote struct {
 	EventSymbol string  `json:"eventSymbol"`
 	EventType   string  `json:"eventType"` // always "quote"
 }
+
+// FeedSub is a caller-friendly (event, symbol) pair used by the split
+// OpenFeed / UpdateSubscription API. It maps 1:1 onto
+// FeedRegularSubscription on the wire, but callers don't need to think
+// about the wire type or the "Type" field name.
+type FeedSub struct {
+	Event  string
+	Symbol string
+}

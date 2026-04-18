@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "skills": {
+    "air-go": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "73686e3bf80d1a6d892c9c6e29b4b3b3b84d3a41e98554c1cb28c11bb3fd808b"
+    },
+    "bayesian-ab-testing": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "2c05969c78f03b7244233aaa249d72bf6ea6584fbdde453d98e1ab5dc5388760"
+    },
+    "bayesian-bandits": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "566dd2bae2975eac185b7784679499ba44d4ec640e9804004f642129d6c9bc63"
+    },
+    "bayesian-decision-analysis": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "3ca34d708d57ce67ffcdc5eb028592676a7c397a9797312a97964a0801032af7"
+    },
+    "bayesian-mixture-models": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "cab3023a52550605e056482b50343b5e0ee1f64607375835c2768fa20d75dc70"
+    },
+    "bayesian-regression": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "86f48c5684dae223ce9a840dc3865a8ffaf7f428a70d2173e41b775b82ff4d24"
+    },
+    "binary-classification": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "95510a9cbdc858675b1c43ab92890e335d7af18d239fbad1d205d943dd5d3127"
+    },
+    "go-service": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "c17a7c2951faa3a4c98086cfd907c7ea97a36d86204ff28f666c989cee86c85e"
+    },
+    "k8s-deployment": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "4932f333bf6c80b56ed8765719906aefa0bf842c77ae3f8c115e2550b874c39b"
+    },
+    "resend-email": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "391591d3e5894ff8f13df121bc14bb249fb5cab7cac3a571d13b6afc8c015bdc"
+    },
+    "sqlite": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "092f78a7808cc25095ef4ff4cf812bc4aa203bdc49a8fef0330d0e2ed9b61011"
+    },
+    "temporal-go": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "15425f819737a18c699914d78a88026dd740c13abac9ab0ba7271c5d3233ad16"
+    },
+    "urfave-cli": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "1c4b7c47c44c2f0a57ad64db289614e4901709e6c4376adbea4ec8f1fec3e49c"
+    }
+  }
+}

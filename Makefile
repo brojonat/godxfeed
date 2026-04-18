@@ -64,6 +64,57 @@ run-nats-dummy-publisher: build-cli
 	$(call setup_env, service/.env.dev)
 	./cli debug publish-nats --nats-topic godxfeed.SPY --interval 150ms 2>&1 | tee logs/publisher.log
 
+# -----------------------------------------------------------------------------
+# Synthetic data source (tools/synth)
+#
+# A fully-decoupled Python process that impersonates tasty's dxLink gateway,
+# replaying PyMC-sampled quote time series from a DuckDB file. Useful when
+# the market's closed or you want a known generative ground truth to
+# validate downstream inference against.
+#
+# Recipe:
+#   make synth-install   — uv sync the tools/synth venv
+#   make synth-generate  — build quotes.duckdb from a PyMC prior
+#   make synth-serve     — run the FastAPI WS server on :9999
+#   make run-http-mock   — run the Go server pointed at the mock (no tastytrade OAuth needed)
+# -----------------------------------------------------------------------------
+SYNTH_DIR := tools/synth
+SYNTH_DB  ?= $(SYNTH_DIR)/quotes.duckdb
+SYNTH_PORT ?= 9999
+
+synth-install:
+	cd $(SYNTH_DIR) && uv sync
+
+synth-generate:
+	@mkdir -p logs
+	cd $(SYNTH_DIR) && uv run synth-generate \
+		--out $(abspath $(SYNTH_DB)) \
+		--symbols SPY AAPL \
+		--n-ticks 600 --tick-ms 500
+
+synth-serve:
+	@mkdir -p logs
+	cd $(SYNTH_DIR) && uv run synth-serve \
+		--db $(abspath $(SYNTH_DB)) \
+		--host 127.0.0.1 --port $(SYNTH_PORT) \
+		2>&1 | tee $(abspath logs/synth.log)
+
+# Run the Go HTTP server pointed at the local synth mock. No tastytrade
+# OAuth required — the mock noop-authorizes any token. Still needs NATS
+# (for the app<->browser fanout) unless you pass --minimal-setup.
+run-http-mock: build-cli
+	@mkdir -p logs
+	$(call setup_env, service/.env.dev)
+	./cli run http-server \
+		--dev-mode \
+		--log-level -4 \
+		--dxfeed-url ws://127.0.0.1:$(SYNTH_PORT)/realtime \
+		--symbols SPY --symbols AAPL \
+		2>&1 | tee logs/http.log
+
+tail-synth-log:
+	tail -f logs/synth.log
+
 tail-http-log:
 	tail -f logs/http.log
 

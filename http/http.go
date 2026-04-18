@@ -173,17 +173,31 @@ func RunHTTPServer(
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
+	mux.Handle("POST /dxlink/subscriptions", stools.AdaptHandler(
+		handleAddSubscription(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+	mux.Handle("DELETE /dxlink/subscriptions", stools.AdaptHandler(
+		handleRemoveSubscription(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
 
-	// plots
+	// plots + admin: the HTML shell itself is public (no secrets embedded
+	// — just the NATS browser URL and the server endpoint string). The
+	// page's JS handles auth: it accepts ?token=... in the URL on first
+	// visit, stashes it in localStorage, and shows a login modal if no
+	// token is available. Guarding the HTML server-side blocked that
+	// flow because the browser can't send an Authorization header on a
+	// plain navigation — users landed on a 401 before any JS ran. All
+	// the *data* endpoints the page consumes (/dxlink/*, /stream, etc.)
+	// remain bearer-gated, so no content is actually exposed.
 	mux.Handle("GET /plots", stools.AdaptHandler(
 		handleGetPlots(tts, natsBrowserURL),
-		// this requires a query param or a bearer token to facilitate
-		// browser-based auth (we could alternatively use a cookie)
-		atLeastOneAuth(queryAuthorizerCtxSetEmail(getSecretKey), bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 	mux.Handle("GET /admin", stools.AdaptHandler(
 		handleAdmin(tts, natsBrowserURL),
-		atLeastOneAuth(queryAuthorizerCtxSetEmail(getSecretKey), bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 
 	// webhook handlers

@@ -1,40 +1,193 @@
 package service
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/brojonat/godxfeed/dxclient"
 )
 
-func TestSubscriptionManager_RegisterAndSnapshot(t *testing.T) {
-	m := NewSubscriptionManager()
-	m.Register("Quote", "SPY", "godxfeed.SPY")
-	m.Register("Quote", "AAPL", "godxfeed.AAPL")
+// fakeFeedController is a test double for the dxclient side of
+// SubscriptionManager. Each UpdateSubscription call is recorded; callers
+// inject err to exercise the error path.
+type fakeFeedController struct {
+	mu    sync.Mutex
+	calls []updateCall
+	err   error
+}
 
-	got := m.Snapshot()
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
+type updateCall struct {
+	add    []dxclient.FeedSub
+	remove []dxclient.FeedSub
+}
+
+func (f *fakeFeedController) UpdateSubscription(add, remove []dxclient.FeedSub) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
 	}
-	// Sorted: AAPL before SPY (same event, lexicographic symbol).
-	if got[0].Symbol != "AAPL" || got[1].Symbol != "SPY" {
-		t.Errorf("unexpected sort order: %+v", got)
+	// Copy to detach from caller mutation.
+	ac := append([]dxclient.FeedSub(nil), add...)
+	rc := append([]dxclient.FeedSub(nil), remove...)
+	f.calls = append(f.calls, updateCall{add: ac, remove: rc})
+	return nil
+}
+
+func (f *fakeFeedController) Calls() []updateCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]updateCall, len(f.calls))
+	copy(out, f.calls)
+	return out
+}
+
+// TestSubscriptionManager_AddDispatchesAndRegisters — the happy path: Add
+// both sends the add to the dxclient AND makes the subscription visible in
+// the snapshot. If either half is skipped, the system is broken.
+func TestSubscriptionManager_AddDispatchesAndRegisters(t *testing.T) {
+	fc := &fakeFeedController{}
+	m := NewSubscriptionManager(fc)
+
+	if err := m.Add("Quote", "SPY"); err != nil {
+		t.Fatalf("Add: %v", err)
 	}
-	for _, info := range got {
-		if info.MsgCount != 0 {
-			t.Errorf("fresh registration must have zero msgCount; got %d for %s", info.MsgCount, info.Symbol)
-		}
-		if !info.FirstSeenAt.IsZero() || !info.LastSeenAt.IsZero() {
-			t.Errorf("seen-at must be zero before first observation; got %+v", info)
-		}
+
+	calls := fc.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("want 1 UpdateSubscription call, got %d", len(calls))
+	}
+	if len(calls[0].add) != 1 || calls[0].add[0].Symbol != "SPY" || calls[0].add[0].Event != "Quote" {
+		t.Errorf("add payload wrong: %+v", calls[0].add)
+	}
+	if len(calls[0].remove) != 0 {
+		t.Errorf("remove should be empty on Add; got %+v", calls[0].remove)
+	}
+
+	snap := m.Snapshot()
+	if len(snap) != 1 || snap[0].Symbol != "SPY" || snap[0].Event != "Quote" {
+		t.Errorf("snapshot wrong: %+v", snap)
+	}
+	if snap[0].Subject != "godxfeed.SPY" {
+		t.Errorf("subject = %q, want %q", snap[0].Subject, "godxfeed.SPY")
 	}
 }
 
+// TestSubscriptionManager_AddRollsBackOnClientError — if the dxclient
+// reports a failure, state must NOT be updated. Otherwise Snapshot would
+// show subscriptions that don't actually exist on the wire.
+func TestSubscriptionManager_AddRollsBackOnClientError(t *testing.T) {
+	fc := &fakeFeedController{err: errors.New("boom")}
+	m := NewSubscriptionManager(fc)
+
+	if err := m.Add("Quote", "SPY"); err == nil {
+		t.Fatalf("Add must return error from client")
+	}
+	if snap := m.Snapshot(); len(snap) != 0 {
+		t.Errorf("snapshot must be empty when client errored; got %+v", snap)
+	}
+}
+
+// TestSubscriptionManager_AddIsIdempotent — re-adding an existing sub must
+// not re-dispatch to the wire (the dxLink server would reject duplicate
+// adds) and must not clobber existing message counts.
+func TestSubscriptionManager_AddIsIdempotent(t *testing.T) {
+	fc := &fakeFeedController{}
+	m := NewSubscriptionManager(fc)
+
+	if err := m.Add("Quote", "SPY"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	m.Observe("Quote", "SPY")
+	m.Observe("Quote", "SPY")
+	if err := m.Add("Quote", "SPY"); err != nil {
+		t.Fatalf("Add (second): %v", err)
+	}
+
+	if got := len(fc.Calls()); got != 1 {
+		t.Errorf("UpdateSubscription called %d times, want 1", got)
+	}
+	if snap := m.Snapshot(); snap[0].MsgCount != 2 {
+		t.Errorf("msgCount clobbered by duplicate Add: got %d want 2", snap[0].MsgCount)
+	}
+}
+
+// TestSubscriptionManager_RemoveDispatchesAndUnregisters — inverse of Add.
+func TestSubscriptionManager_RemoveDispatchesAndUnregisters(t *testing.T) {
+	fc := &fakeFeedController{}
+	m := NewSubscriptionManager(fc)
+
+	if err := m.Add("Quote", "SPY"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := m.Remove("Quote", "SPY"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	calls := fc.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("want 2 UpdateSubscription calls (add, remove), got %d", len(calls))
+	}
+	if len(calls[1].remove) != 1 || calls[1].remove[0].Symbol != "SPY" {
+		t.Errorf("remove payload wrong: %+v", calls[1].remove)
+	}
+
+	if snap := m.Snapshot(); len(snap) != 0 {
+		t.Errorf("after Remove snapshot should be empty; got %+v", snap)
+	}
+}
+
+// TestSubscriptionManager_RemoveMissingIsNoOp — removing something that
+// isn't registered must not dispatch to the wire (the dxLink server would
+// reject an unknown remove) and must not error.
+func TestSubscriptionManager_RemoveMissingIsNoOp(t *testing.T) {
+	fc := &fakeFeedController{}
+	m := NewSubscriptionManager(fc)
+
+	if err := m.Remove("Quote", "NOPE"); err != nil {
+		t.Fatalf("Remove on missing must not error, got %v", err)
+	}
+	if got := len(fc.Calls()); got != 0 {
+		t.Errorf("UpdateSubscription called %d times, want 0", got)
+	}
+}
+
+// TestSubscriptionManager_RemoveLeavesStateWhenClientFails — if the wire
+// side refuses the remove, local state must stay registered, otherwise the
+// UI would show the sub as gone while messages keep arriving.
+func TestSubscriptionManager_RemoveLeavesStateWhenClientFails(t *testing.T) {
+	fc := &fakeFeedController{}
+	m := NewSubscriptionManager(fc)
+	if err := m.Add("Quote", "SPY"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	fc.mu.Lock()
+	fc.err = errors.New("downstream failure")
+	fc.mu.Unlock()
+
+	if err := m.Remove("Quote", "SPY"); err == nil {
+		t.Fatalf("Remove must surface client error")
+	}
+	if snap := m.Snapshot(); len(snap) != 1 {
+		t.Errorf("state must be retained when Remove fails; got %+v", snap)
+	}
+}
+
+// TestSubscriptionManager_ObserveIncrementsAndTimestamps — unchanged
+// semantics from the pre-refactor manager, exercised via the new public
+// API so the test survives the Register→Add rename.
 func TestSubscriptionManager_ObserveIncrementsAndTimestamps(t *testing.T) {
-	m := NewSubscriptionManager()
+	fc := &fakeFeedController{}
+	m := NewSubscriptionManager(fc)
 	clock := time.Unix(1_700_000_000, 0)
 	m.now = func() time.Time { return clock }
 
-	m.Register("Quote", "SPY", "godxfeed.SPY")
+	if err := m.Add("Quote", "SPY"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 
 	m.Observe("Quote", "SPY")
 	clock = clock.Add(5 * time.Second)
@@ -50,7 +203,6 @@ func TestSubscriptionManager_ObserveIncrementsAndTimestamps(t *testing.T) {
 	if info.MsgCount != 3 {
 		t.Errorf("msgCount = %d, want 3", info.MsgCount)
 	}
-	// FirstSeenAt must be frozen at the *first* observation, not the most recent.
 	if got := info.FirstSeenAt.Unix(); got != 1_700_000_000 {
 		t.Errorf("firstSeenAt unix = %d, want 1700000000", got)
 	}
@@ -59,49 +211,24 @@ func TestSubscriptionManager_ObserveIncrementsAndTimestamps(t *testing.T) {
 	}
 }
 
+// TestSubscriptionManager_ObserveUnregisteredIsNoOp — Observe on an
+// unknown key must never auto-register (the subject mapping comes from Add,
+// not inbound traffic).
 func TestSubscriptionManager_ObserveUnregisteredIsNoOp(t *testing.T) {
-	m := NewSubscriptionManager()
-	// No Register called first. Observe should silently do nothing.
+	m := NewSubscriptionManager(&fakeFeedController{})
 	m.Observe("Quote", "SPY")
-	snap := m.Snapshot()
-	if len(snap) != 0 {
+	if snap := m.Snapshot(); len(snap) != 0 {
 		t.Errorf("Observe must not auto-register; got %+v", snap)
 	}
 }
 
-func TestSubscriptionManager_RegisterIsIdempotent(t *testing.T) {
-	m := NewSubscriptionManager()
-	m.Register("Quote", "SPY", "godxfeed.SPY")
-	m.Observe("Quote", "SPY")
-	m.Observe("Quote", "SPY")
-	// Re-registering must not zero the counter — otherwise a "refresh" call
-	// would silently wipe traffic stats.
-	m.Register("Quote", "SPY", "godxfeed.SPY")
-	snap := m.Snapshot()
-	if snap[0].MsgCount != 2 {
-		t.Errorf("re-Register clobbered counter; got msgCount=%d, want 2", snap[0].MsgCount)
-	}
-}
-
-func TestSubscriptionManager_Unregister(t *testing.T) {
-	m := NewSubscriptionManager()
-	m.Register("Quote", "SPY", "godxfeed.SPY")
-	m.Register("Quote", "AAPL", "godxfeed.AAPL")
-	m.Unregister("Quote", "AAPL")
-	snap := m.Snapshot()
-	if len(snap) != 1 || snap[0].Symbol != "SPY" {
-		t.Errorf("after Unregister got %+v, want only SPY", snap)
-	}
-	// Unregistering a missing key is a no-op.
-	m.Unregister("Quote", "nonexistent")
-}
-
-// TestSubscriptionManager_ConcurrentObserveIsSafe hammers Observe from many
-// goroutines and asserts the final count matches the number of calls. Proves
-// the atomic counters work under contention.
+// TestSubscriptionManager_ConcurrentObserveIsSafe — atomic counters under
+// contention. Not ideology, just lock-free correctness.
 func TestSubscriptionManager_ConcurrentObserveIsSafe(t *testing.T) {
-	m := NewSubscriptionManager()
-	m.Register("Quote", "SPY", "godxfeed.SPY")
+	m := NewSubscriptionManager(&fakeFeedController{})
+	if err := m.Add("Quote", "SPY"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 
 	const (
 		goroutines = 16
@@ -126,12 +253,16 @@ func TestSubscriptionManager_ConcurrentObserveIsSafe(t *testing.T) {
 	}
 }
 
+// TestSubscriptionManager_SortOrder — Snapshot order contract is stable.
 func TestSubscriptionManager_SortOrder(t *testing.T) {
-	m := NewSubscriptionManager()
-	m.Register("Quote", "ZZZ", "godxfeed.ZZZ")
-	m.Register("Greeks", "AAA", "godxfeed.AAA")
-	m.Register("Quote", "AAA", "godxfeed.AAA")
-	m.Register("Greeks", "ZZZ", "godxfeed.ZZZ")
+	m := NewSubscriptionManager(&fakeFeedController{})
+	for _, p := range []struct{ ev, sym string }{
+		{"Quote", "ZZZ"}, {"Greeks", "AAA"}, {"Quote", "AAA"}, {"Greeks", "ZZZ"},
+	} {
+		if err := m.Add(p.ev, p.sym); err != nil {
+			t.Fatalf("Add %s/%s: %v", p.ev, p.sym, err)
+		}
+	}
 
 	snap := m.Snapshot()
 	want := [][2]string{

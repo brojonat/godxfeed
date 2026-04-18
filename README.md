@@ -13,6 +13,27 @@ publishes each event to a NATS subject (`godxfeed.<SYMBOL>`). Everything
 downstream — the browser UI, the TimescaleDB writer, any future sidecar — is
 just a NATS subscriber. **NATS is the single source of truth.**
 
+## Project Goals
+
+The project has three layered goals. Each layer depends only on the one
+below it, so you can use just the pieces you need.
+
+1. **A simple, convenient Go client for dxFeed (`dxclient/`).** The base
+   layer: a small programmatic interface that handles the dxLink handshake,
+   feed channel lifecycle, and incremental subscription updates. Usable on
+   its own, no service or UI required. If all you want is to pull quotes
+   into a Go program, import `dxclient`.
+2. **A UI that visualizes the data.** The HTTP server + NATS fan-out +
+   browser pages (`/plots`, `/admin`) turn the raw feed into something a
+   human can watch: histograms, line charts, an options grid, a live
+   subscriptions dashboard.
+3. **A natural-language interface to the client.** The UI talks to service
+   endpoints that carry an LLM-provider dependency; those endpoints accept
+   user voice or text, translate it into concrete `dxclient` commands
+   (subscribe SPY, show the options chain for AAPL, etc.), and dispatch
+   them. The LLM is just a translator between human intent and the
+   programmatic API from goal 1.
+
 ## Architecture
 
 ```mermaid
@@ -97,6 +118,32 @@ flowchart LR
   just enough to extract each event's `eventSymbol`, then publishes the raw
   per-event JSON to NATS unmodified. Sinks and consumers re-parse whatever
   fields they care about.
+
+## How To: Run Without Market Hours (synthetic data)
+
+For development and end-to-end validation off-market, the repo ships a
+fully decoupled mock at `tools/synth/` — a Python process that
+impersonates tasty's dxLink gateway and replays PyMC-sampled quotes
+from a DuckDB file at the stored cadence. No tastytrade OAuth, no
+live connection required.
+
+```bash
+# One-shot — starts everything and opens /admin in your browser.
+scripts/synth-up.sh     # idempotent; safe to re-run
+scripts/synth-down.sh   # stop
+
+# Or drive the pieces yourself:
+make synth-install    # one-time: uv sync the Python deps
+make synth-generate   # sample a prior → quotes.duckdb
+make synth-serve      # ws://127.0.0.1:9999/realtime — leave running
+make run-http-mock    # Go server pointed at the mock
+```
+
+See [`tools/synth/README.md`](./tools/synth/README.md) for details. The
+`--dxfeed-url` flag on `cli run http-server` is what switches the
+ingress from tastytrade to a local WS URL; it also short-circuits the
+OAuth streamer-token round-trip so the Go side can run without real
+credentials.
 
 ## How To: Dev Stack (tmux)
 

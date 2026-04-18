@@ -22,6 +22,7 @@ func setupService(
 	listenPort string,
 	twEndpoint string,
 	dxEndpoint string,
+	dxForceURL string,
 	oauthCfg service.OAuthConfig,
 	minimalSetup bool,
 	natsURL string,
@@ -31,14 +32,20 @@ func setupService(
 	natsGodxfeedPassword string,
 	natsNkeySeed string,
 ) (service.Service, error) {
-	tp, err := service.NewTokenProvider(oauthCfg)
-	if err != nil {
-		return nil, fmt.Errorf("oauth config: %w", err)
+	// In mock mode (dxForceURL set), skip OAuth entirely — the mock
+	// accepts any token, so there's nothing to exchange.
+	var tp service.TokenProvider
+	if dxForceURL == "" {
+		var err error
+		tp, err = service.NewTokenProvider(oauthCfg)
+		if err != nil {
+			return nil, fmt.Errorf("oauth config: %w", err)
+		}
 	}
 
 	if minimalSetup {
 		l.Debug("initializing service with minimal dependencies")
-		return service.NewService(twEndpoint, dxEndpoint, tp, l, nil), nil
+		return service.NewService(twEndpoint, dxEndpoint, dxForceURL, tp, l, nil), nil
 	}
 
 	appNC, err := service.SetupNatsWithAuthCallout(
@@ -54,7 +61,7 @@ func setupService(
 	if err != nil {
 		return nil, fmt.Errorf("could not setup nats: %w", err)
 	}
-	return service.NewService(twEndpoint, dxEndpoint, tp, l, appNC), nil
+	return service.NewService(twEndpoint, dxEndpoint, dxForceURL, tp, l, appNC), nil
 }
 
 // serve_http is the CLI entry point. It validates env, constructs the service,
@@ -65,10 +72,17 @@ func serve_http(ctx *cli.Context) error {
 	required := []string{
 		"listen-port",
 		"tastyworks-endpoint",
-		"tw-oauth-token-url",
-		"tw-oauth-client-secret",
-		"tw-oauth-refresh-token",
 		"dxfeed-endpoint",
+	}
+	// OAuth is only needed when we're actually dialing tastytrade's
+	// dxFeed gateway. A --dxfeed-url override points at a local mock,
+	// which accepts any token.
+	if ctx.String("dxfeed-url") == "" {
+		required = append(required,
+			"tw-oauth-token-url",
+			"tw-oauth-client-secret",
+			"tw-oauth-refresh-token",
+		)
 	}
 	if !ctx.Bool("minimal-setup") {
 		required = append(required,
@@ -92,6 +106,7 @@ func serve_http(ctx *cli.Context) error {
 		ctx.String("listen-port"),
 		ctx.String("tastyworks-endpoint"),
 		ctx.String("dxfeed-endpoint"),
+		ctx.String("dxfeed-url"),
 		service.OAuthConfig{
 			TokenURL:     ctx.String("tw-oauth-token-url"),
 			ClientSecret: ctx.String("tw-oauth-client-secret"),

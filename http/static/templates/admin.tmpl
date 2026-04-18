@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <title>godxfeed — admin</title>
   <link rel="stylesheet" href="/static/css/admin.css">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
   <script>
     const NATS_URL = "{{ .NATSURL }}";
   </script>
@@ -22,6 +23,16 @@
 
   <section>
     <h2>Subscriptions</h2>
+    <form id="add-sub-form" class="sub-form" autocomplete="off">
+      <label>Event
+        <input type="text" id="add-event" value="Quote" size="10">
+      </label>
+      <label>Symbol
+        <input type="text" id="add-symbol" placeholder="SPY" required>
+      </label>
+      <button type="submit">Add</button>
+      <span id="add-sub-status" class="muted"></span>
+    </form>
     <table id="subs-table">
       <thead>
         <tr>
@@ -31,12 +42,18 @@
           <th class="num">Messages</th>
           <th>First seen</th>
           <th>Last seen</th>
+          <th></th>
         </tr>
       </thead>
       <tbody id="subs-body">
-        <tr class="empty"><td colspan="6">no subscriptions yet</td></tr>
+        <tr class="empty"><td colspan="7">no subscriptions yet</td></tr>
       </tbody>
     </table>
+  </section>
+
+  <section>
+    <h2>Distributions <span class="muted">(last 100 bid prices per symbol, rxjs + D3)</span></h2>
+    <div id="plots-grid"></div>
   </section>
 
   <section>

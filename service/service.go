@@ -58,11 +58,16 @@ type Service interface {
 	GetRelatedOptionSymbols(symbol string) ([]string, error)
 	GetStreamSymbols(symbol string, method func(string) ([]string, error)) ([]string, error)
 
-	// StartIngress dials dxLink, authenticates, subscribes to the initial
-	// symbols, and begins publishing FEED_DATA events to NATS. Safe to call
-	// once per service instance. Registers each symbol in the
-	// SubscriptionManager.
+	// StartIngress dials dxLink, authenticates, opens the feed channel,
+	// subscribes to the initial symbols, and begins publishing FEED_DATA
+	// events to NATS. Safe to call once per service instance.
 	StartIngress(ctx context.Context, symbols []string) error
+
+	// AddSubscription adds a single (event, symbol) subscription on the
+	// live dxLink feed. Errors if StartIngress hasn't run yet.
+	AddSubscription(event, symbol string) error
+	// RemoveSubscription removes a single (event, symbol) subscription.
+	RemoveSubscription(event, symbol string) error
 
 	// Subscriptions returns the current dxLink subscription state snapshot.
 	Subscriptions() []SubscriptionInfo
@@ -93,23 +98,34 @@ func SymbolMethodNRelatedOptions(s Service, n int) func(string) ([]string, error
 type service struct {
 	twEndpoint string
 	dxEndpoint string
+	// dxForceURL, if non-empty, overrides the dial URL returned by
+	// tastytrade's /api-quote-tokens and also short-circuits the OAuth
+	// streamer-token fetch. Used to point the ingress at a local mock
+	// (e.g. tools/synth) for offline validation.
+	dxForceURL string
 	tp         TokenProvider
 	logger     *slog.Logger
 	nats       *nats.Conn
 	subs       *SubscriptionManager
 
 	// dxLink connection state. Everything inside here is guarded by dxMu.
-	dxMu      sync.RWMutex
-	dxClient  dx.Client
-	dxStatus  DXLinkStatus
+	dxMu     sync.RWMutex
+	dxClient dx.Client
+	dxStatus DXLinkStatus
 }
 
 // NewService constructs the service. Note the absence of a *pgxpool / DB
 // handle — persistence is delegated entirely to analytics sinks that have
-// their own connections.
+// their own connections. The SubscriptionManager is deferred until
+// StartIngress, when the dxLink client it depends on exists.
+//
+// dxForceURL, when non-empty, forces StartIngress to dial that exact URL
+// (scheme included, e.g. ws://localhost:9999/realtime) and to skip the
+// tastytrade streamer-token fetch. Pass "" for real-mode operation.
 func NewService(
 	twEndpoint string,
 	dxEndpoint string,
+	dxForceURL string,
 	tp TokenProvider,
 	l *slog.Logger,
 	nc *nats.Conn,
@@ -117,10 +133,10 @@ func NewService(
 	return &service{
 		twEndpoint: twEndpoint,
 		dxEndpoint: dxEndpoint,
+		dxForceURL: dxForceURL,
 		tp:         tp,
 		logger:     l,
 		nats:       nc,
-		subs:       NewSubscriptionManager(),
 	}
 }
 
@@ -151,7 +167,37 @@ func (s *service) Log(level int, msg string, args ...any) {
 
 func (s *service) NATS() *nats.Conn { return s.nats }
 
-func (s *service) Subscriptions() []SubscriptionInfo { return s.subs.Snapshot() }
+func (s *service) Subscriptions() []SubscriptionInfo {
+	s.dxMu.RLock()
+	m := s.subs
+	s.dxMu.RUnlock()
+	if m == nil {
+		return nil
+	}
+	return m.Snapshot()
+}
+
+// AddSubscription adds an (event, symbol) to the live dxLink feed.
+func (s *service) AddSubscription(event, symbol string) error {
+	s.dxMu.RLock()
+	m := s.subs
+	s.dxMu.RUnlock()
+	if m == nil {
+		return fmt.Errorf("AddSubscription: ingress not started")
+	}
+	return m.Add(event, symbol)
+}
+
+// RemoveSubscription drops an (event, symbol) from the live dxLink feed.
+func (s *service) RemoveSubscription(event, symbol string) error {
+	s.dxMu.RLock()
+	m := s.subs
+	s.dxMu.RUnlock()
+	if m == nil {
+		return fmt.Errorf("RemoveSubscription: ingress not started")
+	}
+	return m.Remove(event, symbol)
+}
 
 func (s *service) DXLinkStatus() DXLinkStatus {
 	s.dxMu.RLock()
@@ -312,17 +358,26 @@ func (s *service) StartIngress(ctx context.Context, symbols []string) error {
 	cl := func(level int, msg string, args ...any) { s.Log(level, msg, args...) }
 	s.dxClient = dx.NewClient(cl)
 
-	td, err := s.NewStreamerToken(ctx)
-	if err != nil {
-		s.dxClient = nil
-		s.dxMu.Unlock()
-		return fmt.Errorf("ingress: get streamer token: %w", err)
+	// Mock-mode: dxForceURL bypasses the tastytrade streamer-token round
+	// trip entirely. Any token works — tools/synth noop-authorizes.
+	var dialURL, authToken string
+	if s.dxForceURL != "" {
+		dialURL = s.dxForceURL
+		authToken = "mock"
+	} else {
+		td, err := s.NewStreamerToken(ctx)
+		if err != nil {
+			s.dxClient = nil
+			s.dxMu.Unlock()
+			return fmt.Errorf("ingress: get streamer token: %w", err)
+		}
+		dialURL = td.DXLinkURL
+		if dialURL == "" {
+			dialURL = "wss://" + s.dxEndpoint
+		}
+		authToken = td.Token
 	}
-	dialURL := td.DXLinkURL
-	if dialURL == "" {
-		dialURL = "wss://" + s.dxEndpoint
-	}
-	s.Log(int(slog.LevelInfo), "dialing dxlink", "url", dialURL, "symbols", symbols)
+	s.Log(int(slog.LevelInfo), "dialing dxlink", "url", dialURL, "symbols", symbols, "mock", s.dxForceURL != "")
 
 	if err := s.dxClient.Dial(ctx, dialURL, func(msg dx.MessageSetup) error {
 		s.Log(int(slog.LevelDebug), "dxlink setup reply", "msg", fmt.Sprintf("%+v", msg))
@@ -335,7 +390,7 @@ func (s *service) StartIngress(ctx context.Context, symbols []string) error {
 	s.dxStatus.Connected = true
 	s.dxStatus.DXLinkURL = dialURL
 
-	if err := s.dxClient.Authenticate(td.Token); err != nil {
+	if err := s.dxClient.Authenticate(authToken); err != nil {
 		s.dxClient = nil
 		s.dxStatus = DXLinkStatus{}
 		s.dxMu.Unlock()
@@ -343,20 +398,32 @@ func (s *service) StartIngress(ctx context.Context, symbols []string) error {
 	}
 	s.dxStatus.Authenticated = true
 
-	if len(symbols) > 0 {
-		if err := s.dxClient.Subscribe(symbols); err != nil {
-			s.dxMu.Unlock()
-			return fmt.Errorf("ingress: subscribe to %v: %w", symbols, err)
-		}
-		// Assume Quote for now — matches the single event field set
-		// requested in dxclient.Subscribe. Phase 3 will broaden.
-		for _, sym := range symbols {
-			s.subs.Register("Quote", sym, subjectFor(sym))
-		}
+	if err := s.dxClient.OpenFeed(); err != nil {
+		s.dxMu.Unlock()
+		return fmt.Errorf("ingress: open feed: %w", err)
 	}
+
+	// Now that the dxLink feed channel is open, construct the
+	// SubscriptionManager bound to this client. It owns every future
+	// add/remove on the wire.
+	s.subs = NewSubscriptionManager(s.dxClient)
 
 	feed, _ := s.dxClient.C()
 	s.dxMu.Unlock()
+
+	// Register the initial symbols in a single wire call. Sequential
+	// per-symbol Adds race the dxclient's handler dispatch (see
+	// BulkAdd's doc). One batched UpdateSubscription needs only one ack,
+	// so there's no window. Quote-only for now — Phase 3 will broaden
+	// FEED_SETUP's accepted event field set and thread the event type
+	// through from callers.
+	pairs := make([]struct{ Event, Symbol string }, 0, len(symbols))
+	for _, sym := range symbols {
+		pairs = append(pairs, struct{ Event, Symbol string }{Event: "Quote", Symbol: sym})
+	}
+	if err := s.subs.BulkAdd(pairs); err != nil {
+		return fmt.Errorf("ingress: initial subscribe: %w", err)
+	}
 
 	go s.runIngressLoop(ctx, feed)
 	return nil

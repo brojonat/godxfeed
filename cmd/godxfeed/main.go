@@ -215,6 +215,11 @@ func main() {
 								Value:   "tasty-openapi-ws.dxfeed.com/realtime",
 								Usage:   "DXLINK streaming endpoint (fallback if tastytrade doesn't return a dxlink-url).",
 							},
+							&cli.StringFlag{
+								Name:    "dxfeed-url",
+								EnvVars: []string{"DXFEED_URL"},
+								Usage:   "Mock-mode override: full WS URL (e.g. ws://localhost:9999/realtime). When set, bypasses tastytrade OAuth and the /api-quote-tokens fetch; the ingress dials this URL directly and authenticates with a dummy token.",
+							},
 							&cli.IntFlag{
 								Name:  "max-symbol-count",
 								Usage: "Maximum number of symbols to stream.",

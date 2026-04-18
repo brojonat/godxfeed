@@ -90,3 +90,52 @@ tr.empty td { color: #555; text-align: center; padding: 1rem; }
 #tail .tail-line { border-bottom: 1px dashed #1a1f26; padding: 2px 0; }
 #tail .tail-line .subj { color: #9cc7ff; margin-right: .5em; }
 #tail .tail-line .ts { color: #666; margin-right: .5em; }
+
+.sub-form { display: flex; gap: .75rem; align-items: center; margin: .5rem 0 1rem; flex-wrap: wrap; }
+.sub-form label { display: flex; gap: .25rem; align-items: center; font-size: 13px; color: #9aa4ae; }
+.sub-form input { background: #0b0d10; color: #e6e6e6; border: 1px solid #2a313b; border-radius: 4px; padding: 4px 6px; font-family: inherit; }
+.sub-form button { background: #1a2330; color: #e6e6e6; border: 1px solid #2a313b; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.sub-form button:hover { background: #243244; }
+#add-sub-status { font-size: 12px; }
+button.remove-sub { background: #2a1a1a; color: #e6e6e6; border: 1px solid #5a2f2f; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
+button.remove-sub:hover { background: #3a1f1f; }
+button.remove-sub:disabled { opacity: .5; cursor: wait; }
+
+#plots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: .75rem;
+  margin: .5rem 0 1rem;
+}
+.sym-plot {
+  background: #0b0d10;
+  border: 1px solid #2a313b;
+  border-radius: 6px;
+  padding: .5rem .6rem;
+}
+.sym-plot-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  margin-bottom: .25rem;
+  color: #9aa4ae;
+}
+.sym-plot-head .sym-name {
+  color: #e6e6e6;
+  font-weight: 600;
+  font-size: 14px;
+  font-family: ui-monospace, monospace;
+}
+.sym-plot-head .sym-last {
+  font-family: ui-monospace, monospace;
+  color: #6aff9e;
+}
+.sym-plot svg { display: block; }
+.sym-plot .bars rect { fill: #4a9eff; fill-opacity: .35; }
+.sym-plot .fillarea { fill: #4a9eff; fill-opacity: .15; }
+.sym-plot .dens-line { fill: none; stroke: #6aff9e; stroke-width: 1.5; }
+.sym-plot .recent line { stroke: #ff6a6a; stroke-width: 1.5; }
+.sym-plot .xaxis path, .sym-plot .yaxis path,
+.sym-plot .xaxis line, .sym-plot .yaxis line { stroke: #3a4250; }
+.sym-plot .xaxis text, .sym-plot .yaxis text { fill: #9aa4ae; font-size: 10px; }

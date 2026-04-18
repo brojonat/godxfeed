@@ -3,6 +3,137 @@
 Hard-won pitfalls worth remembering. Each entry: what happened, why it was
 surprising, how to avoid it next time.
 
+## Sequential per-item subscribes race the dxclient handler dispatcher
+
+**What:** Initial `StartIngress` did `for sym := range symbols { subs.Add(sym) }`.
+Each `Add` registers a one-shot handler, sends FEED_SUBSCRIPTION, and
+waits for FEED_CONFIG. Python mock acked every sub correctly within
+1-2ms. Yet the SECOND ack was silently dropped by the Go client and
+`awaitFeedConfig` timed out at 30s.
+
+**Why surprising:** All sub messages were sent; all acks were received
+at the wire level (confirmed by decoding `http.log`). Nothing looked
+wrong from either side in isolation. The drop was invisible in any
+single layer.
+
+**Root cause:** The dispatcher snapshots handlers at message-receive
+time. Call #1's handler sends on `done`, which unblocks call #1's
+outer `Add`. The symbols loop advances to call #2, which then
+registers its handler. The ack for call #2 can arrive between
+"call #1's handler fires" and "call #2 registers its handler" —
+in that window the dispatcher takes a snapshot with no matching
+handler and drops the message.
+
+**Fix:** Batch startup into a single `UpdateSubscription(add, remove)`
+call — one ack, one handler, no window. `SubscriptionManager.BulkAdd`
+in `service/subscriptions.go`. Runtime add/remove from `/admin` still
+uses the per-symbol `Add`/`Remove` (user-initiated, no burst
+pressure). The deeper dispatcher fix is out of scope for now.
+
+## Starlette WebSocket is not multi-writer safe
+
+**What:** `tools/synth/serve.py` had both the request handler and the
+replay task calling `await ws.send_text(...)`. Outgoing frames
+interleaved and the client started missing acks intermittently.
+
+**Why surprising:** Python is single-threaded; naïve reasoning says
+two coroutines can't collide. But each `send_text` goes through
+several `await` points down the ASGI stack, and two send flows can
+partially interleave at those yield points.
+
+**Fix:** An `asyncio.Lock` on the session, acquired around every
+send. Any WS server that has out-of-band emitters (timers, replay
+tasks, pub/sub subscribers) needs this.
+
+## Synchronous DB calls inside an asyncio handler block the event loop
+
+**What:** `ibis.duckdb.connect(...).table("quotes").order_by(...).to_pandas()`
+ran for ~1.2s on my data. During that 1.2s the entire `asyncio`
+event loop was frozen — the WebSocket handler couldn't process new
+messages, the other coroutines couldn't progress, `KEEPALIVE` replies
+stopped.
+
+**Why surprising:** Both the ibis and duckdb packages have excellent
+in-memory performance, so I assumed the query would be negligible.
+In practice even cheap queries block for long enough to disrupt a
+real-time server.
+
+**Fix:** `await asyncio.to_thread(lambda: ...)` around any sync DB
+/ CPU-heavy call in an async handler. Generalizes to sync clients
+for Postgres, Redis, file I/O — anything that doesn't have a
+native asyncio API.
+
+## llvmlite / numba dropped macOS x86_64 wheels at 0.46 / 0.63
+
+**What:** `uv sync` on `tools/synth` failed building `llvmlite==0.47.0`
+from source ("cmake not found"). PyMC → pytensor → numba → llvmlite is
+a transitive chain.
+
+**Why surprising:** PyPI lists arm64 macOS wheels for llvmlite 0.47,
+plus manylinux + win_amd64 — but no `macosx_*_x86_64` entries. Anyone
+on an Intel Mac has to build from source unless they pin older.
+
+**Fix:** Pin `numba<0.63` and `llvmlite<0.46` in `tools/synth/pyproject.toml`
+(llvmlite 0.45 was the last Intel-Mac version). Drop the constraints on
+arm64 / Linux hosts. Alternative is `brew install cmake` — slower each
+time.
+
+## `sync.RWMutex` is not reentrant — deadlock from lock + self-call
+
+**What:** First cut of `OpenFeed` did `c.lock.Lock()` and then called
+`c.getNextChanID()` which itself did `c.lock.Lock()`. The second lock
+deadlocked the goroutine silently — the test just hung, no panic, no
+stack trace until the test framework killed it.
+
+**Why surprising:** In some languages / other mutex types, recursive
+locking is allowed or at least fails loudly. Go's `sync.Mutex` /
+`sync.RWMutex` are non-reentrant and a same-goroutine re-lock just
+blocks forever. There's no built-in detector.
+
+**Fix:** Split any helper that touches `c.lock` into a public version
+(that locks) and an internal `...Locked` version that the caller uses
+while already holding the lock. `getNextChanIDLocked()` in
+`dxclient/client.go` is the pattern. If a hang's first symptom is a
+test timing out *before any wire traffic*, check for same-goroutine
+re-locks before anything else.
+
+## The existing `dxclient.Client.Subscribe` couldn't be tested against the repo's own mock
+
+**What:** Writing Phase-2 TDD tests, I went to extend the existing
+`mock_server` to respond to CHANNEL_REQUEST and FEED_SETUP — and
+realized it never had. Meaning the pre-existing `Subscribe` method
+would hang against the mock. The pre-existing `TestClientSetup` only
+covered Dial + Authenticate.
+
+**Why surprising:** You'd assume a mock server named after a protocol
+covers the protocol, or that the client's non-trivial method (open
+channel, feed setup, feed subscription, all request/response) had
+test coverage. Neither held.
+
+**Fix:** Wrote a minimal in-test websocket server in
+`dxclient/feed_test.go` using `httptest.NewServer` + gorilla/websocket
+directly. Full control, no dependency on `mock_server`, records every
+inbound message for assertions. Pattern worth re-using for any future
+protocol work — one file, ~100 lines of harness, exhaustive
+observability.
+
+## Port 8080 collision makes `TestClientSetup` look broken
+
+**What:** Running `go test ./dxclient/` while the dev server is up
+fails `TestClientSetup` with "bad handshake" — the test's own mock
+server can't bind to `:8080`, so the client ends up dialing the real
+dev server, which doesn't speak dxlink.
+
+**Why surprising:** The error message (handshake failure) blames the
+protocol layer, not the port. If you don't notice the real server
+running on the side, you chase a ghost.
+
+**Fix:** Before reaching for "my refactor broke the mock", check
+`lsof -i :8080`. Longer term, this test should bind to `:0` and
+discover its own port. Logged in TODO as "pre-existing teardown leak /
+keepalive panic."
+
+
 ## tastytrade session auth is dead (since 2024-12-01)
 
 **What:** The `POST /sessions` endpoint that exchanged username/password for

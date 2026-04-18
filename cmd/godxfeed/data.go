@@ -20,6 +20,7 @@ func setupServiceForDataCmd(ctx *cli.Context) (service.Service, error) {
 		ctx.String("listen-port"),
 		ctx.String("tastyworks-endpoint"),
 		ctx.String("dxfeed-endpoint"),
+		ctx.String("dxfeed-url"),
 		oauthCfgFromCtx(ctx),
 		true, // minimal-setup: these commands don't need NATS
 		ctx.String("nats-url"),

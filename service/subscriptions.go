@@ -1,10 +1,13 @@
 package service
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/brojonat/godxfeed/dxclient"
 )
 
 // SubscriptionInfo is the public snapshot shape returned by
@@ -25,6 +28,14 @@ type DXLinkStatus struct {
 	DXLinkURL     string `json:"dxlinkURL"`
 }
 
+// FeedController is the slice of dxclient.Client that SubscriptionManager
+// needs to drive add/remove on the wire. Kept as a local interface (rather
+// than accepting dxclient.Client directly) so tests can inject a fake
+// without satisfying the full Client surface.
+type FeedController interface {
+	UpdateSubscription(add, remove []dxclient.FeedSub) error
+}
+
 type subKey struct {
 	event  string
 	symbol string
@@ -37,49 +48,132 @@ type subState struct {
 	lastSeenAt  atomic.Int64
 }
 
-// SubscriptionManager tracks active dxLink subscriptions and per-(event,
-// symbol) message counters. It is safe for concurrent use; observation is
-// lock-free on the hot path.
+// SubscriptionManager is the single owner of the dxLink feed subscription
+// set: every change to what the server is subscribed to goes through here,
+// and the in-memory counter map is kept in lockstep with the wire state.
+// Observation is lock-free on the hot path.
 type SubscriptionManager struct {
+	fc    FeedController
 	mu    sync.RWMutex
 	state map[subKey]*subState
 	now   func() time.Time
 }
 
-// NewSubscriptionManager constructs a manager using time.Now as the clock.
-func NewSubscriptionManager() *SubscriptionManager {
+// NewSubscriptionManager constructs a manager bound to the supplied
+// FeedController. The controller must already be connected and have its
+// feed channel open (see dxclient.Client.OpenFeed) — Add/Remove just send
+// incremental FEED_SUBSCRIPTION updates on that channel.
+func NewSubscriptionManager(fc FeedController) *SubscriptionManager {
 	return &SubscriptionManager{
+		fc:    fc,
 		state: map[subKey]*subState{},
 		now:   time.Now,
 	}
 }
 
-// Register records an (event, symbol) subscription → NATS subject mapping.
-// Idempotent: calling twice with the same key leaves state (including counters)
-// unchanged — otherwise we'd clobber real traffic stats the first time a
-// caller "re-registers" an already-active subscription.
-func (m *SubscriptionManager) Register(event, symbol, subject string) {
-	k := subKey{event: event, symbol: symbol}
+// BulkAdd starts a batch of subscriptions in a single wire call. Use for
+// initial startup — N sequential Add calls race the dxclient's handler
+// dispatch (the ack for call #2 can arrive before call #2's handler is
+// registered, because the handler from call #1 unblocks the next loop
+// iteration before call #2's register runs). One batched UpdateSubscription
+// needs only one ack, so there's no window.
+//
+// Pairs already present are skipped silently (see Add for rationale).
+func (m *SubscriptionManager) BulkAdd(pairs []struct{ Event, Symbol string }) error {
+	if len(pairs) == 0 {
+		return nil
+	}
+	fresh := make([]dxclient.FeedSub, 0, len(pairs))
+	m.mu.Lock()
+	for _, p := range pairs {
+		k := subKey{event: p.Event, symbol: p.Symbol}
+		if _, exists := m.state[k]; exists {
+			continue
+		}
+		fresh = append(fresh, dxclient.FeedSub{Event: p.Event, Symbol: p.Symbol})
+	}
+	m.mu.Unlock()
+	if len(fresh) == 0 {
+		return nil
+	}
+
+	if err := m.fc.UpdateSubscription(fresh, nil); err != nil {
+		return fmt.Errorf("subscriptions: bulk add: %w", err)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.state[k]; exists {
-		return
+	for _, sub := range fresh {
+		k := subKey{event: sub.Event, symbol: sub.Symbol}
+		if _, exists := m.state[k]; exists {
+			continue
+		}
+		m.state[k] = &subState{subject: subjectFor(sub.Symbol)}
 	}
-	m.state[k] = &subState{subject: subject}
+	return nil
 }
 
-// Unregister removes a subscription. No-op if the key is unknown.
-func (m *SubscriptionManager) Unregister(event, symbol string) {
+// Add starts a subscription on the wire and records local state. Idempotent:
+// re-adding an already-registered (event, symbol) is a no-op and does not
+// dispatch a duplicate FEED_SUBSCRIPTION (the server rejects duplicates and
+// re-dispatch would clobber traffic counters).
+func (m *SubscriptionManager) Add(event, symbol string) error {
 	k := subKey{event: event, symbol: symbol}
+	m.mu.Lock()
+	if _, exists := m.state[k]; exists {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+
+	if err := m.fc.UpdateSubscription(
+		[]dxclient.FeedSub{{Event: event, Symbol: symbol}},
+		nil,
+	); err != nil {
+		return fmt.Errorf("subscriptions: add %s/%s: %w", event, symbol, err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Double-check under the write lock in case of a concurrent Add — the
+	// second winner just drops its state write.
+	if _, exists := m.state[k]; exists {
+		return nil
+	}
+	m.state[k] = &subState{subject: subjectFor(symbol)}
+	return nil
+}
+
+// Remove stops a subscription on the wire and drops local state. No-op if
+// the key is unknown (dxLink would reject a "remove unknown" request).
+func (m *SubscriptionManager) Remove(event, symbol string) error {
+	k := subKey{event: event, symbol: symbol}
+	m.mu.RLock()
+	_, exists := m.state[k]
+	m.mu.RUnlock()
+	if !exists {
+		return nil
+	}
+
+	if err := m.fc.UpdateSubscription(
+		nil,
+		[]dxclient.FeedSub{{Event: event, Symbol: symbol}},
+	); err != nil {
+		// Leave state in place: the wire rejected our remove, so the
+		// server is still sending us events. Dropping state would make
+		// the UI lie about what's active.
+		return fmt.Errorf("subscriptions: remove %s/%s: %w", event, symbol, err)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.state, k)
+	return nil
 }
 
 // Observe increments the msgCount and bumps lastSeenAt for (event, symbol).
-// If the subscription isn't registered, this is a no-op — Observe never
-// auto-registers because the subject mapping comes from the dxLink subscribe
-// call, not from inbound traffic.
+// No-op for unregistered keys — the subject mapping comes from Add, not
+// inbound traffic.
 func (m *SubscriptionManager) Observe(event, symbol string) {
 	k := subKey{event: event, symbol: symbol}
 	m.mu.RLock()
@@ -90,7 +184,6 @@ func (m *SubscriptionManager) Observe(event, symbol string) {
 	}
 	nsec := m.now().UnixNano()
 	st.msgCount.Add(1)
-	// CAS firstSeenAt from 0 only (first observation wins).
 	if st.firstSeenAt.Load() == 0 {
 		st.firstSeenAt.CompareAndSwap(0, nsec)
 	}
