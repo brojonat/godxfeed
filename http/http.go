@@ -13,7 +13,6 @@ import (
 	"github.com/brojonat/godxfeed/http/api"
 	"github.com/brojonat/godxfeed/service"
 	sapi "github.com/brojonat/godxfeed/service/api"
-	"github.com/brojonat/server-tools/stools"
 )
 
 func writeOK(w http.ResponseWriter) {
@@ -100,8 +99,8 @@ func RunHTTPServer(
 	mux.Handle("GET /static/", http.StripPrefix("/static/", staticHandler))
 
 	// smoke test/boot handlers
-	mux.Handle("GET /ping", stools.AdaptHandler(
-		stools.HandlePing(),
+	mux.Handle("GET /ping", adaptHandler(
+		handlePing(),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
 			bearerAuthorizerCtxSetToken(getSecretKey),
@@ -110,28 +109,28 @@ func RunHTTPServer(
 
 	// admin handlers
 	// returns a Bearer token; basic auth protected
-	mux.Handle("POST /token", stools.AdaptHandler(
+	mux.Handle("POST /token", adaptHandler(
 		handleIssueToken(tts),
 		atLeastOneAuth(basicAuthorizerCtxSetEmail(getSecretKey)),
 	))
-	mux.Handle("POST /refresh-token", stools.AdaptHandler(
+	mux.Handle("POST /refresh-token", adaptHandler(
 		handleRefreshToken(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
-	mux.Handle("GET /test-bearer-token", stools.AdaptHandler(
+	mux.Handle("GET /test-bearer-token", adaptHandler(
 		handleTestBearerToken(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
-	mux.Handle("GET /nats-auth-callout", stools.AdaptHandler(
+	mux.Handle("GET /nats-auth-callout", adaptHandler(
 		handleNATSCallout(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 
 	// returns DXFeed streamer token; requires Bearer token
-	mux.Handle("GET /streamer-token", stools.AdaptHandler(
+	mux.Handle("GET /streamer-token", adaptHandler(
 		handleNewStreamerToken(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
@@ -140,14 +139,14 @@ func RunHTTPServer(
 	))
 
 	// tastytrade data handlers
-	mux.Handle("GET /symbol", stools.AdaptHandler(
+	mux.Handle("GET /symbol", adaptHandler(
 		handleGetSymbolData(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
 			bearerAuthorizerCtxSetToken(getSecretKey),
 		),
 	))
-	mux.Handle("GET /option-chain", stools.AdaptHandler(
+	mux.Handle("GET /option-chain", adaptHandler(
 		handleGetOptionChain(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(
@@ -156,29 +155,29 @@ func RunHTTPServer(
 	))
 
 	// NATS streaming endpoint
-	mux.Handle("POST /stream", stools.AdaptHandler(
+	mux.Handle("POST /stream", adaptHandler(
 		handleNATSStream(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
 
 	// dxLink admin/observability endpoints
-	mux.Handle("GET /dxlink/status", stools.AdaptHandler(
+	mux.Handle("GET /dxlink/status", adaptHandler(
 		handleDXLinkStatus(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
-	mux.Handle("GET /dxlink/subscriptions", stools.AdaptHandler(
+	mux.Handle("GET /dxlink/subscriptions", adaptHandler(
 		handleDXLinkSubscriptions(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
-	mux.Handle("POST /dxlink/subscriptions", stools.AdaptHandler(
+	mux.Handle("POST /dxlink/subscriptions", adaptHandler(
 		handleAddSubscription(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
-	mux.Handle("DELETE /dxlink/subscriptions", stools.AdaptHandler(
+	mux.Handle("DELETE /dxlink/subscriptions", adaptHandler(
 		handleRemoveSubscription(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
@@ -193,22 +192,22 @@ func RunHTTPServer(
 	// plain navigation — users landed on a 401 before any JS ran. All
 	// the *data* endpoints the page consumes (/dxlink/*, /stream, etc.)
 	// remain bearer-gated, so no content is actually exposed.
-	mux.Handle("GET /plots", stools.AdaptHandler(
+	mux.Handle("GET /plots", adaptHandler(
 		handleGetPlots(tts, natsBrowserURL),
 	))
-	mux.Handle("GET /admin", stools.AdaptHandler(
+	mux.Handle("GET /admin", adaptHandler(
 		handleAdmin(tts, natsBrowserURL),
 	))
 
 	// webhook handlers
-	mux.Handle("POST /webhook/buy-me-a-coffee", stools.AdaptHandler(
+	mux.Handle("POST /webhook/buy-me-a-coffee", adaptHandler(
 		handleBMCWebhook(tts),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		bmcWebhookAuthorizer(tts, getWebhookSecret),
 	))
 
 	// Add this near the other route handlers in RunHTTPServer
-	mux.Handle("GET /", stools.AdaptHandler(
+	mux.Handle("GET /", adaptHandler(
 		handleIndex(),
 	))
 

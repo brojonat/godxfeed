@@ -16,7 +16,6 @@ import (
 
 	"github.com/brojonat/godxfeed/http/api"
 	"github.com/brojonat/godxfeed/service"
-	"github.com/brojonat/server-tools/stools"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/handlers"
 )
@@ -106,7 +105,7 @@ func queryAuthorizerCtxSetEmail(gsk func() string) func(http.ResponseWriter, *ht
 
 // Iterates over the supplied authorizers and if at least one passes, then the
 // next handler is called, otherwise an unauthorized response is written.
-func atLeastOneAuth(authorizers ...func(http.ResponseWriter, *http.Request) bool) stools.HandlerAdapter {
+func atLeastOneAuth(authorizers ...func(http.ResponseWriter, *http.Request) bool) handlerAdapter {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			for _, a := range authorizers {
@@ -123,7 +122,7 @@ func atLeastOneAuth(authorizers ...func(http.ResponseWriter, *http.Request) bool
 }
 
 // Redirects to index page if authentication fails
-func redirectToIndexOnAuthFailure(authorizers ...func(http.ResponseWriter, *http.Request) bool) stools.HandlerAdapter {
+func redirectToIndexOnAuthFailure(authorizers ...func(http.ResponseWriter, *http.Request) bool) handlerAdapter {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			for _, a := range authorizers {
@@ -143,7 +142,7 @@ func redirectToIndexOnAuthFailure(authorizers ...func(http.ResponseWriter, *http
 // handler. This will make the handler gracefully handle panics, sets the
 // content type to application/json, limits the body size that clients can send,
 // wraps the handler with the usual CORS settings.
-func apiMode(s service.Service, maxBytes int64, headers, methods, origins []string) stools.HandlerAdapter {
+func apiMode(s service.Service, maxBytes int64, headers, methods, origins []string) handlerAdapter {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			next = makeGraceful(s)(next)
@@ -158,7 +157,7 @@ func apiMode(s service.Service, maxBytes int64, headers, methods, origins []stri
 	}
 }
 
-func makeGraceful(s service.Service) stools.HandlerAdapter {
+func makeGraceful(s service.Service) handlerAdapter {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
@@ -180,7 +179,7 @@ func makeGraceful(s service.Service) stools.HandlerAdapter {
 	}
 }
 
-func setMaxBytesReader(mb int64) stools.HandlerAdapter {
+func setMaxBytesReader(mb int64) handlerAdapter {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			r.Body = http.MaxBytesReader(w, r.Body, mb)
@@ -189,7 +188,7 @@ func setMaxBytesReader(mb int64) stools.HandlerAdapter {
 	}
 }
 
-func setContentType(content string) stools.HandlerAdapter {
+func setContentType(content string) handlerAdapter {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", content)
@@ -199,7 +198,7 @@ func setContentType(content string) stools.HandlerAdapter {
 }
 
 // bmcWebhookAuthorizer creates middleware to verify Buy Me a Coffee webhook signatures
-func bmcWebhookAuthorizer(s service.Service, getSecret func() string) stools.HandlerAdapter {
+func bmcWebhookAuthorizer(s service.Service, getSecret func() string) handlerAdapter {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			// Get the signature from the X-BMC-Signature header
