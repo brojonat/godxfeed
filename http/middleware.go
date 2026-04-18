@@ -17,7 +17,7 @@ import (
 	"github.com/brojonat/godxfeed/http/api"
 	"github.com/brojonat/godxfeed/service"
 	"github.com/brojonat/server-tools/stools"
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/handlers"
 )
 
@@ -35,7 +35,7 @@ func getWebhookSecret() string {
 }
 
 type authJWTClaims struct {
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 	Email string `json:"email"`
 }
 

@@ -8,16 +8,16 @@ import (
 	"time"
 
 	"github.com/brojonat/godxfeed/service"
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func createBearerToken(email string, expiresAt time.Time) (string, error) {
-	sc := jwt.StandardClaims{
-		ExpiresAt: expiresAt.Unix(),
+	sc := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(expiresAt),
 	}
 	c := authJWTClaims{
-		StandardClaims: sc,
-		Email:          email,
+		RegisteredClaims: sc,
+		Email:            email,
 	}
 	return generateAccessToken(c)
 }
