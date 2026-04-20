@@ -24,11 +24,22 @@ export function showLoginModal(onSuccessCallback) {
   // Create token input
   const tokenLabel = document.createElement("label");
   tokenLabel.htmlFor = "api-token";
-  tokenLabel.textContent = "Enter your API token:";
+  tokenLabel.textContent = "Godxfeed JWT:";
+
+  // Hint — tells the user exactly what to paste and how to mint it.
+  // Keep in sync with README "How To: Godxfeed JWT (for the web UI)".
+  const tokenHint = document.createElement("div");
+  tokenHint.className = "login-hint";
+  tokenHint.innerHTML =
+    'Run <code>make refresh-auth-token</code> locally, then paste the ' +
+    '<code>AUTH_TOKEN</code> value from <code>service/.env.dev</code>. ' +
+    'The token is stored in <code>localStorage</code> for next time.';
 
   const tokenInput = document.createElement("input");
   tokenInput.type = "password";
   tokenInput.id = "api-token";
+  tokenInput.name = "godxfeed-jwt";
+  tokenInput.autocomplete = "off";
   tokenInput.required = true;
 
   // Create submit button
@@ -43,6 +54,7 @@ export function showLoginModal(onSuccessCallback) {
 
   // Assemble the modal
   form.appendChild(tokenLabel);
+  form.appendChild(tokenHint);
   form.appendChild(tokenInput);
   form.appendChild(submitButton);
   form.appendChild(errorMessage);

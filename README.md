@@ -34,6 +34,34 @@ below it, so you can use just the pieces you need.
    them. The LLM is just a translator between human intent and the
    programmatic API from goal 1.
 
+## Why Bayesian analytics?
+
+This isn't a high-frequency regime, and market dynamics shift faster
+than any statistical window can outrun — which also rules out treating
+it as a big-data problem. It's the in-between case where Bayesian models
+shine: the posterior *is* the answer, not a point estimate. You see the
+uncertainty directly, overlay it against the observed distribution (what
+the `/admin` panels do), and base decisions or expectation values on the
+whole shape rather than a single number.
+
+Analytics sidecars (e.g. the upcoming PyMC σ fitter) publish posterior
+densities on `godxfeed.analytics.<type>.<symbol>` — a sibling of the
+`godxfeed.<SYMBOL>` quote stream — and the frontend renders them as
+first-class overlays alongside the empirical histogram. Because NATS is
+the single source of truth, sidecars don't touch the Go server: they
+subscribe to quotes, fit a model, publish a density, and the `/admin`
+panels pick it up automatically.
+
+The first such sidecar lives at [`tools/analytics/`](./tools/analytics/)
+— a Python/FastAPI service that subscribes to `godxfeed.*`, buffers
+the last ~60s of mids per symbol, and every `ANALYTICS_INTERVAL_S`
+fits `log-returns ~ Normal(0, σ)` with PyMC NUTS on the trailing 30s.
+It then publishes the posterior-*predictive* density over the next
+mid (`LogNormal(log p₀, σ)` averaged across σ posterior samples) on
+`godxfeed.analytics.posterior.<SYMBOL>`, which the `/admin` and
+`/plots?plot_kind=symbol_detail` overlays pick up automatically
+(`make analytics-serve` or `make analytics-docker-run`).
+
 ## Architecture
 
 ```mermaid
@@ -119,6 +147,41 @@ flowchart LR
   per-event JSON to NATS unmodified. Sinks and consumers re-parse whatever
   fields they care about.
 
+## Subscription model — two layers
+
+There are two distinct subscription concepts in the system, and they
+answer different questions. Conflating them is easy and wrong.
+
+**1. Service-instance dxLink subscriptions** — what *this* Go process
+is pulling from dxFeed upstream. Owned by the `SubscriptionManager` in
+`service/subscriptions.go`, exposed at `GET /dxlink/subscriptions`,
+adjusted via `POST` / `DELETE /dxlink/subscriptions`. The `/admin`
+page's Subscriptions table and Add/Remove controls operate here. When
+the service is horizontally scaled (likely sharded by symbol — one
+instance owns `SPY`/`AAPL`, another owns `QQQ`/`$NDX`, etc.), each
+instance manages its own subscription set. The admin view on one
+instance shows (and can adjust) only that shard's responsibilities —
+by design.
+
+**2. Client NATS subscriptions** — whatever a NATS client (browser,
+sidecar, anything) has subscribed to on the subject tree. Completely
+independent of any service instance's dxLink state. A client
+subscribed to `godxfeed.SPY` receives data regardless of which shard
+is publishing it, and also picks up publishes on
+`godxfeed.analytics.<type>.<symbol>` from analytics workers that
+aren't godxfeed service instances at all. This layer is the client's
+responsibility: the `/admin` Distributions panel and live tail are
+one such client (subscribed to `godxfeed.>`); future user-facing
+dashboards will have their own NATS-subscription UI for choosing
+which subjects to watch.
+
+The two layers can legitimately diverge: a symbol may be absent from
+the Subscriptions table of the instance you're looking at yet still
+stream on NATS (because a sibling shard owns it, or an analytic
+sidecar publishes on a related subject). That's not a bug — it's the
+point. Admin controls reshape what *this* instance pulls from
+dxFeed; client subscriptions reshape what *this* viewer sees.
+
 ## How To: Run Without Market Hours (synthetic data)
 
 For development and end-to-end validation off-market, the repo ships a
@@ -157,9 +220,17 @@ make dev-status   # show windows
 Logs are tee'd to `logs/http.log`, `logs/nats.log`, `logs/publisher.log` —
 `make tail-http-log` / `tail-nats-log` for convenience.
 
-The individual targets (`make run-nats-server`, `make run-http-dev`,
-`make run-nats-dummy-publisher`) can be run standalone if you'd rather drive
-the stack by hand.
+The individual targets (`make run-nats-server`, `make synth-serve`,
+`make run-http-mock`) can be run standalone if you'd rather drive the
+stack by hand.
+
+> `godxfeed.<SYMBOL>` is owned by the dxLink ingress goroutine — the
+> `SubscriptionManager` is the only thing publishing quotes to NATS.
+> There is no separate dummy NATS publisher: off-market dev data comes
+> from the synth mock at `tools/synth/`, which the Go server consumes
+> through the real dxLink protocol. Anything that wants to appear on
+> the `/admin` stream must either (a) go through dxLink, or (b) publish
+> on a sibling subject like `godxfeed.analytics.*` (sidecars do this).
 
 ## How To: Authenticate with tastytrade (one-time setup)
 
@@ -217,6 +288,11 @@ token is stored in `localStorage` for subsequent visits.
   table of active `(event, symbol)` subscriptions with per-row message
   counters, and a live tail of every message flowing through
   `godxfeed.>` (100-line ring buffer, pause/clear/msg-rate controls).
+- **`/plots?plot_kind=symbol_detail&symbol=SYMBOL`** — user-facing
+  single-symbol page. Live bid/ask cards, a rolling 60s time-series
+  panel, and a distribution panel over recent mid prices with vertical
+  rules for the current bid/ask plus any analytic posterior overlays
+  published on `godxfeed.analytics.*.<SYMBOL>`.
 - **`/plots?plot_kind=dynamic_distribution&symbol=SYMBOL`** — D3 histogram +
   area plot of the last 100 bid prices, updating in real time.
 - **`/plots?plot_kind=line_chart&symbol=SYMBOL`** — live line chart of

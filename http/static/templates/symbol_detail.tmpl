@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>godxfeed — {{ .Symbol }}</title>
+  <link rel="stylesheet" href="/static/css/symbol_detail.css">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script>
+    const NATS_URL = "{{ .NATSURL }}";
+    const SYMBOL   = "{{ .Symbol }}";
+  </script>
+  <script type="module" src="{{ .Endpoint }}/static/js/symbol_detail.js"></script>
+</head>
+<body>
+  <header>
+    <h1><span class="sym-badge">{{ .Symbol }}</span> — live quote &amp; fair-value posterior</h1>
+    <div id="status-line">
+      <span id="status-nats" class="pill loading">nats: …</span>
+      <span id="status-ticks" class="pill loading">ticks: —</span>
+      <span id="status-spread" class="pill loading">spread: —</span>
+    </div>
+  </header>
+
+  <section class="prices">
+    <div class="price-group">
+      <div class="price-label">bid</div>
+      <div class="price-value bid" id="bid-val">—</div>
+      <div class="price-sub" id="bid-size">—</div>
+    </div>
+    <div class="price-group mid">
+      <div class="price-label">mid</div>
+      <div class="price-value" id="mid-val">—</div>
+      <div class="price-sub" id="mid-post">posterior mean: —</div>
+    </div>
+    <div class="price-group">
+      <div class="price-label">ask</div>
+      <div class="price-value ask" id="ask-val">—</div>
+      <div class="price-sub" id="ask-size">—</div>
+    </div>
+  </section>
+
+  <div class="panels-row">
+    <section>
+      <h2>Last 60s <span class="muted">(bid/ask over time)</span></h2>
+      <div id="timeseries-panel"></div>
+    </section>
+
+    <section>
+      <h2>Distribution <span class="muted">(recent mids + fair-value posterior)</span></h2>
+      <div id="dist-panel"></div>
+      <div id="dist-legend">
+        <span class="legend-item"><span class="swatch swatch-hist"></span> observed mids</span>
+        <span class="legend-item"><span class="swatch swatch-bid"></span> current bid</span>
+        <span class="legend-item"><span class="swatch swatch-ask"></span> current ask</span>
+        <span class="legend-item"><span class="swatch swatch-posterior"></span> posterior</span>
+      </div>
+      <div class="panel-foot muted">posteriors arrive on <code>godxfeed.analytics.&gt;.{{ .Symbol }}</code></div>
+    </section>
+  </div>
+</body>
+</html>

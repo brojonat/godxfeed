@@ -140,6 +140,21 @@ h1 {
     border-radius: 4px;
 }
 
+#login-form .login-hint {
+    font-size: 12px;
+    line-height: 1.5;
+    color: #9ca3af;
+    margin: -6px 0 0;
+}
+
+#login-form .login-hint code {
+    background-color: #111827;
+    color: #d1d5db;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
 #login-form button {
     background-color: #10b981;
     color: white;

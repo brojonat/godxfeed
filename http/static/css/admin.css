@@ -135,6 +135,13 @@ button.remove-sub:disabled { opacity: .5; cursor: wait; }
 .sym-plot .bars rect { fill: #4a9eff; fill-opacity: .35; }
 .sym-plot .fillarea { fill: #4a9eff; fill-opacity: .15; }
 .sym-plot .dens-line { fill: none; stroke: #6aff9e; stroke-width: 1.5; }
+.sym-plot .overlays path.overlay-density {
+  fill: none;
+  stroke: #ffc966;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  opacity: .9;
+}
 .sym-plot .recent line { stroke: #ff6a6a; stroke-width: 1.5; }
 .sym-plot .xaxis path, .sym-plot .yaxis path,
 .sym-plot .xaxis line, .sym-plot .yaxis line { stroke: #3a4250; }

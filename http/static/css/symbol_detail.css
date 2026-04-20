@@ -1,0 +1,254 @@
+:root { color-scheme: dark; }
+
+body {
+  font-family: -apple-system, system-ui, sans-serif;
+  background: #0f1419;
+  color: #e6e6e6;
+  margin: 0;
+  padding: 1.5rem 2rem;
+  max-width: 1100px;
+  margin-inline: auto;
+  line-height: 1.5;
+}
+
+h1 {
+  margin: 0 0 .75rem;
+  font-size: 1.35rem;
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+}
+
+h1 .sym-badge {
+  font-family: ui-monospace, monospace;
+  background: #1a2330;
+  border: 1px solid #3a5cff;
+  color: #cfe1ff;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+h2 {
+  font-size: 1.05rem;
+  color: #7ed9b8;
+  margin: 1.5rem 0 .5rem;
+  border-bottom: 1px solid #2a313b;
+  padding-bottom: .25rem;
+}
+
+.muted { color: #888; font-size: .85rem; font-weight: normal; }
+code { background: #1a1f26; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+#status-line {
+  display: flex;
+  gap: .5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.pill {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid #2a313b;
+  background: #1a1f26;
+  color: #9aa4ae;
+  font-family: ui-monospace, monospace;
+}
+
+.pill.loading { color: #9aa4ae; }
+.pill.ok { color: #5ccf8b; border-color: #2e6a45; }
+.pill.bad { color: #ff6b6b; border-color: #a44141; }
+
+.prices {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: .75rem;
+  background: #0b0d10;
+  border: 1px solid #2a313b;
+  border-radius: 6px;
+  padding: .75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.price-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .15rem;
+}
+
+.price-group.mid {
+  border-left: 1px solid #2a313b;
+  border-right: 1px solid #2a313b;
+}
+
+.price-label {
+  text-transform: uppercase;
+  font-size: 11px;
+  color: #888;
+  letter-spacing: .05em;
+}
+
+.price-value {
+  font-family: ui-monospace, monospace;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #e6e6e6;
+  font-variant-numeric: tabular-nums;
+}
+
+.price-value.bid { color: #ff9191; }
+.price-value.ask { color: #8affb7; }
+
+.price-sub {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #666;
+}
+
+/* Two-panel row. Grid collapses to a single column on narrow viewports so
+   the charts don't get squashed under ~420px. */
+.panels-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.panels-row > section { min-width: 0; margin: 0; }
+/* Fixed header height so wrapping-or-not doesn't vertically offset the
+   two chart areas. One-line + minor leeway. */
+.panels-row > section > h2 {
+  margin-top: 0;
+  min-height: 2em;
+  display: flex;
+  align-items: baseline;
+  gap: .4rem;
+  flex-wrap: wrap;
+}
+
+.panel-foot {
+  margin-top: .4rem;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+.panel-foot code { font-size: 10px; }
+
+/* Time-series panel */
+#timeseries-panel {
+  background: #0b0d10;
+  border: 1px solid #2a313b;
+  border-radius: 6px;
+  padding: .5rem;
+}
+
+#timeseries-panel svg { display: block; width: 100%; height: 260px; }
+#timeseries-panel .ts-bid-line { fill: none; stroke: #ff9191; stroke-width: 1.5; }
+#timeseries-panel .ts-ask-line { fill: none; stroke: #8affb7; stroke-width: 1.5; }
+#timeseries-panel .ts-spread-area { fill: #4a9eff; fill-opacity: .08; }
+#timeseries-panel .xaxis path,
+#timeseries-panel .yaxis path,
+#timeseries-panel .xaxis line,
+#timeseries-panel .yaxis line { stroke: #3a4250; }
+#timeseries-panel .xaxis text,
+#timeseries-panel .yaxis text { fill: #9aa4ae; font-size: 10px; }
+
+/* Distribution panel */
+#dist-panel {
+  background: #0b0d10;
+  border: 1px solid #2a313b;
+  border-radius: 6px;
+  padding: .5rem;
+}
+
+#dist-panel svg { display: block; width: 100%; height: 260px; }
+#dist-panel .bars rect { fill: #4a9eff; fill-opacity: .35; }
+#dist-panel .fillarea  { fill: #4a9eff; fill-opacity: .12; }
+#dist-panel .dens-line { fill: none; stroke: #6aff9e; stroke-width: 1.5; }
+#dist-panel .overlays path.overlay-density {
+  fill: #ffc966;
+  fill-opacity: .18;
+  stroke: #ffc966;
+  stroke-width: 2.5;
+}
+#dist-panel .quote-rules line.bid-rule { stroke: #ff6a6a; stroke-width: 2; }
+#dist-panel .quote-rules line.ask-rule { stroke: #6affae; stroke-width: 2; }
+#dist-panel .quote-rules text { fill: #d6d6d6; font-size: 10px; font-family: ui-monospace, monospace; }
+#dist-panel .xaxis path, #dist-panel .yaxis path,
+#dist-panel .xaxis line, #dist-panel .yaxis line { stroke: #3a4250; }
+#dist-panel .xaxis text, #dist-panel .yaxis text { fill: #9aa4ae; font-size: 10px; }
+
+#dist-legend {
+  display: flex;
+  gap: 1rem;
+  margin: .5rem 0 0;
+  font-size: 12px;
+  color: #9aa4ae;
+  flex-wrap: wrap;
+}
+
+.legend-item { display: inline-flex; align-items: center; gap: .35rem; }
+.swatch {
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  border-radius: 1px;
+}
+.swatch-hist      { background: #4a9eff; height: 10px; opacity: .35; }
+.swatch-bid       { background: #ff6a6a; }
+.swatch-ask       { background: #6affae; }
+.swatch-posterior { background: #ffc966; opacity: .6; }
+
+/* Login modal — shared with index.css. Duplicated here so the symbol
+   detail page doesn't depend on index.css loading. */
+.login-modal-container {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+.login-modal {
+  background: #1a1f26;
+  border: 1px solid #2a313b;
+  padding: 24px 28px;
+  border-radius: 8px;
+  width: 420px;
+  max-width: 90%;
+}
+.login-modal h2 { margin-top: 0; border: none; color: #fff; }
+#login-form { display: flex; flex-direction: column; gap: 12px; }
+#login-form input {
+  background: #0b0d10;
+  border: 1px solid #2a313b;
+  color: #e6e6e6;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: ui-monospace, monospace;
+}
+#login-form button {
+  background: #1a2330;
+  color: #e6e6e6;
+  border: 1px solid #3a5cff;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+#login-form .login-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9aa4ae;
+  margin: -4px 0 0;
+}
+#login-form .login-hint code {
+  background: #0b0d10;
+  color: #cfe1ff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+#login-error { color: #ff6b6b; font-size: 12px; }

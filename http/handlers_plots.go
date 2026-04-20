@@ -15,12 +15,14 @@ const (
 	PlotKindNats                string = "nats"
 	PlotKindLineChart           string = "line_chart"
 	PlotKindOptionsGrid         string = "options_grid"
+	PlotKindSymbolDetail        string = "symbol_detail"
 )
 
 var natsPlotTemplate *template.Template
 var dynamicDistributionPlotTemplate *template.Template
 var lineChartPlotTemplate *template.Template
 var optionsGridTemplate *template.Template
+var symbolDetailTemplate *template.Template
 
 type dynamicDistributionPlotTemplateData struct {
 	Endpoint string
@@ -45,6 +47,13 @@ type lineChartPlotTemplateData struct {
 
 type optionsGridTemplateData struct {
 	Endpoint string
+	PlotKind string
+	Symbol   string
+}
+
+type symbolDetailTemplateData struct {
+	Endpoint string
+	NATSURL  string
 	PlotKind string
 	Symbol   string
 }
@@ -112,6 +121,20 @@ func handleGetPlots(s service.Service, natsBrowserURL string) http.HandlerFunc {
 			}
 			w.WriteHeader(http.StatusOK)
 			err := optionsGridTemplate.Execute(w, data)
+			if err != nil {
+				s.Log(int(slog.LevelError), "Error rendering template", "error", err)
+				writeInternalError(s, w, err)
+				return
+			}
+		case PlotKindSymbolDetail:
+			data := symbolDetailTemplateData{
+				Endpoint: os.Getenv("GODXFEED_ENDPOINT"),
+				NATSURL:  natsBrowserURL,
+				PlotKind: pk,
+				Symbol:   symbol,
+			}
+			w.WriteHeader(http.StatusOK)
+			err := symbolDetailTemplate.Execute(w, data)
 			if err != nil {
 				s.Log(int(slog.LevelError), "Error rendering template", "error", err)
 				writeInternalError(s, w, err)

@@ -18,6 +18,7 @@ export const PLOT_CONFIG = {
     optionsGrid: "options_grid",
     lineChart: "line_chart",
     dynamicDistribution: "dynamic_distribution",
+    symbolDetail: "symbol_detail",
   },
 
   // Base URL for plot routes

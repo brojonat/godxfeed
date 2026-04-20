@@ -105,45 +105,53 @@ async def replay(
         log.info("replay: empty DB")
         return
 
-    wall_start_ns = time.time_ns()
     data_start_ns = int(df.iloc[0]["ts_ns"])
     log.info(
-        "replay: %d rows across %s symbols, speed=%.2fx (filtering against live subscription)",
+        "replay: %d rows across %s symbols, speed=%.2fx (looping; filtering against live subscription)",
         len(df),
         sorted({str(s) for s in df["symbol"].unique()}),
         speed,
     )
 
-    for _, row in df.iterrows():
-        key = (row["event_type"], row["symbol"])
-        offset_ns = int((int(row["ts_ns"]) - data_start_ns) / speed)
-        target_wall_ns = wall_start_ns + offset_ns
-        now_ns = time.time_ns()
-        if target_wall_ns > now_ns:
-            await asyncio.sleep((target_wall_ns - now_ns) / 1e9)
-        # Re-check subscription membership AFTER sleeping so the latest
-        # add/remove is honored.
-        if key not in session.subscribed:
-            continue
-        payload = {
-            "eventType": row["event_type"],
-            "eventSymbol": row["symbol"],
-            "bidPrice": float(row["bid_price"]),
-            "askPrice": float(row["ask_price"]),
-            "bidSize": float(row["bid_size"]),
-            "askSize": float(row["ask_size"]),
-        }
-        try:
-            await send(
-                session,
-                {
-                    "type": p.FEED_DATA,
-                    "channel": channel,
-                    "data": [payload],
-                },
-            )
-        except (WebSocketDisconnect, RuntimeError):
-            return
+    # Loop the stored trajectory forever so dev sessions aren't bounded
+    # by the DB length. Each lap re-anchors `wall_start_ns` to "now" so
+    # the inter-tick pacing is preserved seamlessly across the wrap.
+    lap = 0
+    while True:
+        lap += 1
+        wall_start_ns = time.time_ns()
+        if lap > 1:
+            log.info("replay: lap %d", lap)
+        for _, row in df.iterrows():
+            key = (row["event_type"], row["symbol"])
+            offset_ns = int((int(row["ts_ns"]) - data_start_ns) / speed)
+            target_wall_ns = wall_start_ns + offset_ns
+            now_ns = time.time_ns()
+            if target_wall_ns > now_ns:
+                await asyncio.sleep((target_wall_ns - now_ns) / 1e9)
+            # Re-check subscription membership AFTER sleeping so the latest
+            # add/remove is honored.
+            if key not in session.subscribed:
+                continue
+            payload = {
+                "eventType": row["event_type"],
+                "eventSymbol": row["symbol"],
+                "bidPrice": float(row["bid_price"]),
+                "askPrice": float(row["ask_price"]),
+                "bidSize": float(row["bid_size"]),
+                "askSize": float(row["ask_size"]),
+            }
+            try:
+                await send(
+                    session,
+                    {
+                        "type": p.FEED_DATA,
+                        "channel": channel,
+                        "data": [payload],
+                    },
+                )
+            except (WebSocketDisconnect, RuntimeError):
+                return
 
 
 async def handle_client(ws: WebSocket, db_path: str, speed: float) -> None:

@@ -24,6 +24,7 @@ func setupStaticHandler(devMode bool) (http.Handler, error) {
 		natsPlotTemplate = template.Must(template.ParseFiles("http/static/templates/nats.tmpl"))
 		lineChartPlotTemplate = template.Must(template.ParseFiles("http/static/templates/line_chart.tmpl"))
 		optionsGridTemplate = template.Must(template.ParseFiles("http/static/templates/options_grid.tmpl"))
+		symbolDetailTemplate = template.Must(template.ParseFiles("http/static/templates/symbol_detail.tmpl"))
 
 		// Serve static files directly from disk
 		return http.FileServer(http.Dir("http/static")), nil
@@ -36,6 +37,7 @@ func setupStaticHandler(devMode bool) (http.Handler, error) {
 	natsPlotTemplate = template.Must(template.ParseFS(static, "static/templates/nats.tmpl"))
 	lineChartPlotTemplate = template.Must(template.ParseFS(static, "static/templates/line_chart.tmpl"))
 	optionsGridTemplate = template.Must(template.ParseFS(static, "static/templates/options_grid.tmpl"))
+	symbolDetailTemplate = template.Must(template.ParseFS(static, "static/templates/symbol_detail.tmpl"))
 
 	jsFS, err := fs.Sub(static, "static")
 	if err != nil {

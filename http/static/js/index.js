@@ -1,4 +1,4 @@
-import { ensureValidToken, authenticatedFetch } from "./auth.js";
+import { authenticatedFetch } from "./auth.js";
 import { AUTH_CONFIG, PLOT_CONFIG } from "./config.js";
 import { showLoginModal } from "./modal.js";
 
@@ -13,79 +13,24 @@ window.updateLinks = () => {
   const symbol = symbolInput.value.toUpperCase();
 
   const links = [
+    { id: "symbolDetailLink", type: PLOT_CONFIG.types.symbolDetail },
     { id: "optionsGridLink", type: PLOT_CONFIG.types.optionsGrid },
     { id: "lineChartLink", type: PLOT_CONFIG.types.lineChart },
     { id: "dynamicDistLink", type: PLOT_CONFIG.types.dynamicDistribution },
   ];
 
+  // Plain <a href>: let the browser navigate. The destination pages
+  // each read the token from localStorage (same-origin) and also accept
+  // ?token=… on first load, so we don't need a pre-flight test here.
   for (const link of links) {
-    try {
-      const linkElement = document.getElementById(link.id);
-      if (!linkElement) {
-        console.error(`Link element with ID ${link.id} not found`);
-      } else {
-        const plotUrl = `${PLOT_CONFIG.plotsEndpoint}?symbol=${symbol}&plot_kind=${link.type}`;
-
-        // Set the data-plot-url attribute for the navigation handler
-        linkElement.setAttribute("data-plot-url", plotUrl);
-
-        // Add click handler to handle navigation with auth
-        linkElement.addEventListener("click", handlePlotNavigation);
-
-        // Set href for non-JS fallback
-        linkElement.href = plotUrl;
-      }
-    } catch (error) {
-      console.error(`Error updating link ${link.id}:`, error);
+    const linkElement = document.getElementById(link.id);
+    if (!linkElement) {
+      console.error(`Link element with ID ${link.id} not found`);
+      continue;
     }
+    linkElement.href = `${PLOT_CONFIG.plotsEndpoint}?symbol=${symbol}&plot_kind=${link.type}`;
   }
 };
-
-// Function to handle plot navigation with authentication
-async function handlePlotNavigation(event) {
-  event.preventDefault();
-
-  const plotUrl = this.getAttribute("data-plot-url");
-  if (!plotUrl) {
-    console.error("No plot URL found");
-    return;
-  }
-
-  // Get the token
-  const token = localStorage.getItem(AUTH_CONFIG.tokenKey);
-  if (!token) {
-    // No token, show login modal
-    showLoginModal(() => {
-      // After login, try navigation again
-      handlePlotNavigation.call(this, event);
-    });
-    return;
-  }
-
-  try {
-    // First verify the token is valid
-    const response = await fetch(AUTH_CONFIG.endpoints.testToken, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    // If token is valid, navigate to the page with token as query param
-    const url = new URL(plotUrl, window.location.origin);
-    url.searchParams.append("token", token);
-    window.location.href = url.toString();
-  } catch (error) {
-    console.error("Navigation failed:", error);
-    if (error.status === 401) {
-      // Handle unauthorized error - show login modal
-      showLoginModal(() => handlePlotNavigation.call(this, event));
-    }
-  }
-}
 
 async function fetchAvailableSymbols() {
   try {
@@ -176,6 +121,20 @@ function initializeApp() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  // Accept ?token=... once (matches admin.js / line_chart.js pattern).
+  // scripts/synth-up.sh opens URLs with this so a first-time visitor
+  // doesn't need to paste anything.
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get("token");
+  if (urlToken) {
+    localStorage.setItem(AUTH_CONFIG.tokenKey, urlToken);
+    urlParams.delete("token");
+    const newUrl = `${window.location.pathname}${
+      urlParams.toString() ? "?" + urlParams.toString() : ""
+    }`;
+    window.history.replaceState({}, document.title, newUrl);
+  }
+
   // Check if token exists in localStorage
   const token = localStorage.getItem(AUTH_CONFIG.tokenKey);
 

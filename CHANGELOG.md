@@ -5,6 +5,122 @@ Notable changes, newest first. Follows [Keep a Changelog](https://keepachangelog
 ## [Unreleased]
 
 ### Added
+- **Real PyMC posterior in `tools/analytics/`.** Sidecar now fits a
+  GBM model (`log-returns ~ Normal(0, σ)`, `σ ~ HalfNormal(0.01)`)
+  via PyMC NUTS on a rolling 30s window per symbol, and publishes
+  the posterior-*predictive* density over the next mid price
+  (LogNormal(log p₀, σ) averaged across σ samples, trapz-normalized)
+  on the existing `godxfeed.analytics.posterior.<SYMBOL>` contract.
+  The ingest task owns one `godxfeed.*` subscription (single-token
+  wildcard → matches quote subjects, naturally skips the analytics
+  subtree), and per-symbol `QuoteBuffer`s retain 60s of mids. Fits
+  run under `asyncio.to_thread` so NUTS doesn't block the loop.
+  First fit pays ~10s PyTensor compile; subsequent fits are 1-3s on
+  N≈60 samples. Config is env-driven:
+  `ANALYTICS_{FIT_WINDOW_S,BUFFER_WINDOW_S,MIN_SAMPLES,SIGMA_PRIOR,DRAWS,TUNE,CHAINS,N_GRID,MAX_ABS_R}`.
+  New modules `analytics.buffer` (`QuoteBuffer`) and
+  `analytics.posterior` (`fit_sigma_posterior`, `predictive_density`,
+  `mids_to_log_returns`). Replaces the dummy Gaussian publisher —
+  the old `SymbolState`/`drift`/`gaussian_density` API is gone.
+  24 tests pass, including a synthetic-truth σ-recovery NUTS
+  integration test.
+- **User-facing symbol detail page
+  (`/plots?plot_kind=symbol_detail&symbol=SPY`).** First non-admin
+  dashboard: pure NATS client with no dxLink control surface. Two
+  live panels — a rolling 60s time-series of bid/ask (D3 step lines
+  over `godxfeed.<SYMBOL>`) and a distribution panel over the last
+  150 mid prices with vertical rules at the current bid and ask,
+  plus any analytic posterior densities from
+  `godxfeed.analytics.*.<SYMBOL>` overlaid using the same density·N·dx
+  scaling as `/admin`. Posterior mean (∫ x·p(x) dx) is computed
+  client-side from any overlay named `posterior` and rendered under
+  the mid-price card. New files: `http/static/templates/symbol_detail.tmpl`,
+  `http/static/css/symbol_detail.css`, `http/static/js/symbol_detail.js`;
+  new `PlotKindSymbolDetail` case in `http/handlers_plots.go` and
+  matching template registration in `http/handlers_static.go`.
+
+### Changed
+- **`tools/synth/serve.py` replays the stored trajectory in an
+  infinite loop** instead of one-shot iteration. Each lap re-anchors
+  `wall_start_ns` so inter-tick pacing is preserved across the wrap.
+  Previously a ~20-min DuckDB would drain to KEEPALIVE-only silence
+  mid-session — now dev/testing has a continuous quote stream as long
+  as the synth process is up.
+- **Login modal UX.** The token input now carries a hint telling
+  users to run `make refresh-auth-token` and paste the `AUTH_TOKEN`
+  from `service/.env.dev`, so a first-time visitor isn't stuck on an
+  unlabeled password prompt. Input gets `autocomplete="off"` and a
+  non-generic `name` to stop password managers from autofilling
+  adjacent inputs (e.g. the index page's symbol box).
+- **Index page auto-consumes `?token=…` URL param.** Previously only
+  `/admin` and `/plots/line_chart` did. `scripts/synth-up.sh` now
+  works as a one-click entry point from any page in the app.
+- **Index page adds a Symbol Detail plot card** as the primary entry
+  point; other plot cards remain.
+- **Symbol-detail layout polish.** Both panels now share a fixed 260px
+  height and sit in a two-column `panels-row` grid (collapses to a
+  single column under ~420px), with a `min-height` floor on the `<h2>`
+  headers so wrapped titles don't vertically offset the charts.
+- **Symbol-detail posterior overlay visibility.** The distribution
+  panel's x-domain now unions observed-mids + current bid/ask + the
+  overlay's xs range (previously only observed data), so a tight
+  posterior whose support exceeds the recent-mid spread isn't mostly
+  clipped off-screen. The overlay renders as a filled area with a
+  thicker stroke instead of a dashed line, and the D3 transition on
+  the posterior path is dropped so consecutive fits snap cleanly
+  rather than morphing through visually noisy intermediate shapes.
+  Tradeoff documented in-file against `admin_plots.js`, which
+  deliberately keeps the old behavior.
+
+### Fixed
+- **Index page "Symbol Detail" link (and all plot cards) silently did
+  nothing on stale tokens.** `index.js` intercepted clicks and called
+  `/test-bearer-token`, throwing a plain `Error` on non-OK; the catch
+  checked `error.status === 401` which is always `undefined` on a
+  plain Error, so a failed pre-flight produced a silent navigate-to-#.
+  Intercept deleted — each destination page handles its own auth
+  flow from `localStorage`, so the pre-flight was redundant anyway.
+
+### Removed
+- **Go dummy NATS publisher (`cli debug publish-nats`).** The command
+  published Quote-shaped JSON directly to `godxfeed.<SYMBOL>`,
+  bypassing the dxLink ingress and `SubscriptionManager`. That made
+  the `/admin` subscriptions table diverge from what was actually
+  flowing on NATS, violating the invariant that "godxfeed.<SYMBOL> is
+  owned by the dxLink ingress." Off-market dev now goes through the
+  synth mock (`tools/synth/`), which the Go server consumes via the
+  real dxLink protocol so `SubscriptionManager` stays authoritative.
+  Deleted: `cmd/godxfeed/debug.go`, the `debug` command group, the
+  `run-nats-dummy-publisher` Makefile target.
+
+### Changed
+- **`make dev-up` now uses the synth mock.** The tmux stack is
+  `nats + synth-serve + http-mock` (was `nats + http-dev + dummy
+  publisher`). Data path: synth → Go dxLink ingress →
+  `SubscriptionManager` → NATS → UI — the architecturally correct
+  flow with no side-channels.
+
+### Added
+- **Analytics sidecar scaffold (`tools/analytics/`).** Python/FastAPI
+  service that connects to NATS and periodically publishes posterior
+  densities to `godxfeed.analytics.posterior.<SYMBOL>`. Ships with a
+  Dockerfile, 10 pytest cases covering the density math + publish
+  loop, and Makefile targets (`analytics-install`, `analytics-test`,
+  `analytics-serve`, `analytics-docker-build`, `analytics-docker-run`).
+  First cut emits a dummy Gaussian per symbol — the PyMC σ fit slots
+  into `publisher.publish_once` once the plumbing is live. Verified
+  end-to-end against a locally-running Docker container: messages hit
+  NATS with the exact shape the `/admin` overlay consumes.
+- **Frontend analytic overlay routing (`admin_plots.js`).** The rxjs
+  pipeline now classifies messages by shape on the shared `godxfeed.>`
+  wildcard: Quote events drive the histogram buffer; analytic messages
+  (`{type, symbol, xs, ys, at}`) land in a per-symbol overlay Map keyed
+  by `type` and render as a dashed density curve (CSS
+  `.overlay-density`) scaled to expected counts per bin (density · N ·
+  dx) so a well-fit posterior traces the tops of the histogram bars.
+  Per-symbol scan state widened from `prices[]` to `{prices, overlays:
+  Map}`. No new subscription, no server-side change — analytic sidecars
+  publish directly to `godxfeed.analytics.<type>.<symbol>`.
 - **Phase 2: dynamic subscription management.**
   - `dxclient.Client` split `Subscribe([]string)` into `OpenFeed()` +
     `UpdateSubscription(add, remove []FeedSub)` so the feed channel is

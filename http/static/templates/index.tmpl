@@ -12,13 +12,25 @@
         <input
           type="text"
           id="symbolInput"
+          name="symbol"
           placeholder="Symbol"
           value="SPY"
+          autocomplete="off"
           oninput="updateLinks()"
         />
       </div>
 
       <div class="plot-grid">
+        <div class="plot-card">
+          <h2>Symbol Detail</h2>
+          <p>
+            Live bid/ask and a distribution of recent mid prices, with the
+            current bid/ask and any analytic-sidecar posterior densities
+            overlaid. Start here.
+          </p>
+          <a href="#" class="plot-link" id="symbolDetailLink">View Plot</a>
+        </div>
+
         <div class="plot-card">
           <h2>Line Chart</h2>
           <p>

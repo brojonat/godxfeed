@@ -88,29 +88,6 @@ func main() {
 	app := &cli.App{
 		Commands: []*cli.Command{
 			{
-				Name:  "debug",
-				Usage: "Debugging commands",
-				Subcommands: []*cli.Command{
-					{
-						Name:  "publish-nats",
-						Usage: "Publish synthetic quotes to NATS for UI testing",
-						Flags: append(natsFlags(),
-							&cli.StringSliceFlag{
-								Name:     "nats-topic",
-								Usage:    "NATS topics (can be specified multiple times)",
-								Required: true,
-							},
-							&cli.StringFlag{
-								Name:  "interval",
-								Usage: "Interval to publish messages. Default is 1s.",
-								Value: "1s",
-							},
-						),
-						Action: publish_nats,
-					},
-				},
-			},
-			{
 				Name:  "admin",
 				Usage: "Administrative commands",
 				Subcommands: []*cli.Command{

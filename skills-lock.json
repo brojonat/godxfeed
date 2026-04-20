@@ -1,70 +1,355 @@
 {
   "version": 1,
   "skills": {
-    "air-go": {
-      "source": "brojonat/llmsrules",
+    "absurd": {
+      "source": "earendil-works/absurd",
       "sourceType": "github",
-      "computedHash": "73686e3bf80d1a6d892c9c6e29b4b3b3b84d3a41e98554c1cb28c11bb3fd808b"
+      "computedHash": "edc994d9cd6969ad22b5f5d2164077f84d71fe09edd5a714048eb1da6444b6eb"
     },
-    "bayesian-ab-testing": {
-      "source": "brojonat/llmsrules",
+    "add-molab-badge": {
+      "source": "marimo-team/skills",
       "sourceType": "github",
-      "computedHash": "2c05969c78f03b7244233aaa249d72bf6ea6584fbdde453d98e1ab5dc5388760"
+      "computedHash": "a77dbd15988d3a2c167139e7c9871e48ec866c3b9556631a2bd74d0fc5b6747c"
     },
-    "bayesian-bandits": {
-      "source": "brojonat/llmsrules",
+    "algorithmic-art": {
+      "source": "anthropics/skills",
       "sourceType": "github",
-      "computedHash": "566dd2bae2975eac185b7784679499ba44d4ec640e9804004f642129d6c9bc63"
+      "computedHash": "5c2804e8f0d4944c7ce6939a2e4afdcf0cb69c966a505481ed8b96e20bb32eee"
     },
-    "bayesian-decision-analysis": {
-      "source": "brojonat/llmsrules",
+    "anywidget-generator": {
+      "source": "marimo-team/skills",
       "sourceType": "github",
-      "computedHash": "3ca34d708d57ce67ffcdc5eb028592676a7c397a9797312a97964a0801032af7"
+      "computedHash": "93a512dc9870809902459881640b041afe5fe460774e9b49a212d8d799922ab5"
     },
-    "bayesian-mixture-models": {
-      "source": "brojonat/llmsrules",
+    "auto-paper-demo": {
+      "source": "marimo-team/skills",
       "sourceType": "github",
-      "computedHash": "cab3023a52550605e056482b50343b5e0ee1f64607375835c2768fa20d75dc70"
+      "computedHash": "edba11eee233e8e7433a8d0b38798b1da0785eb8363028c1ab28f2c95f026ec8"
     },
-    "bayesian-regression": {
-      "source": "brojonat/llmsrules",
+    "brainstorming": {
+      "source": "obra/superpowers",
       "sourceType": "github",
-      "computedHash": "86f48c5684dae223ce9a840dc3865a8ffaf7f428a70d2173e41b775b82ff4d24"
+      "computedHash": "8df9b47092524833138b58682d03f2e153a242e550d1693657afdbee0cc9cdb0"
     },
-    "binary-classification": {
+    "brand-guidelines": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "4aa754f4f7fc54ac3e7f6e2fb55c0e2fb14b7d70da077b41a86bd1889ff9094c"
+    },
+    "canvas-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "a2fe47d24b3fd8e52faef731fff099c557e698083cd644b2e5695cc4dd8c7715"
+    },
+    "claude-api": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "ef469b7e846529e60f36f2b8c1a7aad3cb925cf1ea89b12855da08ae1012b1d4"
+    },
+    "deploy-to-vercel": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "03e0eaaa9bf13ba1e7ffa387f5893de6f324c0868c627001f179395a8feaa7c9"
+    },
+    "dispatching-parallel-agents": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "e21044ae7496fc285f1df9ff3fb518a3a20bea6f5216c1f59f4987e12c769a0a"
+    },
+    "doc-coauthoring": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "b964e4c3ffe13f66f76dd7919073e60c7aec622cd8a8363bb36323188100cf8e"
+    },
+    "docx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "6962db07127ee540a56e4677f65576d0727668a1d67f7da8bc978f10791c2bfe"
+    },
+    "ducklake": {
       "source": "brojonat/llmsrules",
       "sourceType": "github",
-      "computedHash": "95510a9cbdc858675b1c43ab92890e335d7af18d239fbad1d205d943dd5d3127"
+      "computedHash": "4e1623db883ad35d406c31911dc09d9677d5a5511fca7b7c5919493eac14a39a"
+    },
+    "executing-plans": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "2f709d1a2c7564f8ce6a9bb707e7f5451117ba80f8e8e2302662c29bc61246a6"
+    },
+    "fastapi-service": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "fee05bf29b380e51f0ced4e0093af76008349925715a4bc81d02d03eb581dbf9"
+    },
+    "finishing-a-development-branch": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "9edba9a38684c060fdc38290f640e1dc0c37de286723ac9be73bacacf7cd6f3d"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
     },
     "go-service": {
       "source": "brojonat/llmsrules",
       "sourceType": "github",
       "computedHash": "c17a7c2951faa3a4c98086cfd907c7ea97a36d86204ff28f666c989cee86c85e"
     },
+    "ibis-data": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "4f8be812d3375169975af79c688cd98154b8464e3e3a912a8cdf39e214ebbf55"
+    },
+    "implement-paper": {
+      "source": "marimo-team/skills",
+      "sourceType": "github",
+      "computedHash": "aa30bbcc39bf51a5f6abea45ce537d21bfa018c875f4378707666c572d891d73"
+    },
+    "implement-paper-auto": {
+      "source": "marimo-team/skills",
+      "sourceType": "github",
+      "computedHash": "3f3ae9e5a28af6ea9d63dbded9b6677caebfd600d6a07fecdd845b9403b7a74e"
+    },
+    "internal-comms": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "b36b333bee983462008af46d74689ae5832c2f79ae5f2c18680ee82f6e6bef56"
+    },
+    "jupyter-to-marimo": {
+      "source": "marimo-team/skills",
+      "sourceType": "github",
+      "computedHash": "08a26b09bb992d3056fe8fe30bf29cd11b89dd1539f8bb298b8d85ca728b15c2"
+    },
     "k8s-deployment": {
       "source": "brojonat/llmsrules",
       "sourceType": "github",
       "computedHash": "4932f333bf6c80b56ed8765719906aefa0bf842c77ae3f8c115e2550b874c39b"
     },
-    "resend-email": {
-      "source": "brojonat/llmsrules",
+    "marimo-batch": {
+      "source": "marimo-team/skills",
       "sourceType": "github",
-      "computedHash": "391591d3e5894ff8f13df121bc14bb249fb5cab7cac3a571d13b6afc8c015bdc"
+      "computedHash": "8af0436514aac6a0317733cb0897adc08026a22e82c5beb1ed92eb4bba7e5f4f"
     },
-    "sqlite": {
+    "marimo-notebook": {
+      "source": "marimo-team/skills",
+      "sourceType": "github",
+      "computedHash": "4271f43564b3b8bb41cba36ae4b9ada0164430cc3a1f81267bd5f8cc2d602a9e"
+    },
+    "marimo-notebooks": {
+      "source": "pymc-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "4ceb410cd855bc3bbb22d026bb4e657f16e6d262a753afe72abe99acf62ebe38"
+    },
+    "mcp-builder": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "fc68038c900eb801f73ff96130c9f9dba533cc94212ed8435833242f196dedcf"
+    },
+    "mysql": {
+      "source": "planetscale/database-skills",
+      "sourceType": "github",
+      "computedHash": "6cb0725d61db4940f9eab79436753fe4ecb261f57ae8a08b2ac28676f82cbecc"
+    },
+    "neki": {
+      "source": "planetscale/database-skills",
+      "sourceType": "github",
+      "computedHash": "51721432ccfbffc23341e61ff04cb626a351c13ef04242235b0e5b5d8e13c505"
+    },
+    "openai-agents": {
       "source": "brojonat/llmsrules",
       "sourceType": "github",
-      "computedHash": "092f78a7808cc25095ef4ff4cf812bc4aa203bdc49a8fef0330d0e2ed9b61011"
+      "computedHash": "00d4762f819a3d9fa153607c8f6ccf7254f9f02da0d767785a8356c4bf153282"
+    },
+    "parquet-analysis": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "6c5f5b7029b48a05acea30b1e0b088429e6bbd14d4fb11774a61c10cf18da185"
+    },
+    "pdf": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "cfbc539377088ca7e44a813b30c306327385bbd973cd7a721e1743f60837dd62"
+    },
+    "postgres": {
+      "source": "planetscale/database-skills",
+      "sourceType": "github",
+      "computedHash": "2acf9fae4fcdb6c392923708b67234828f8a9f10b10dfa5d228eaab6e9108245"
+    },
+    "pptx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "6b8b859d26f93aa059c9870d1ab76b44ab69e3d6757ce4a03cc94cb760888073"
+    },
+    "pymc-modeling": {
+      "source": "pymc-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "1931733d6209239317ae974bc9e74e0596d03f8842f51613b36f8cf3471a6cfa"
+    },
+    "pyproject-config": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "2093b3201754fc5615009cbf234a5a587eb455d9dfca8d1f2e18739ad6b4a6e8"
+    },
+    "python-cli": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "7f37b04e607c9802288ee450e07aa5a17db5638c37691e20f5eb2d853d800269"
+    },
+    "receiving-code-review": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "2760c85d4f4117b0006e7ba755f4bbd61f8f4c185f347999763c97f507274e30"
+    },
+    "requesting-code-review": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "246e65cd72a7e360987d94e6c61564ce6d71c6361d1784d529d70e4cbbe8522d"
+    },
+    "scikit-learn": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "computedHash": "1fb1c011aa5452cda8a5ae75f7ed5947ca9853041b9e6cf157e028c9ce37d214"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "b122f4d1e91aa1d83027e050b5b37c3156203ee85458d7b1360bc48167c9e02a"
+    },
+    "skill-name": {
+      "source": "pymc-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "a0d0fd33065adce8f4179af05aad77a293548254f446a2a0d4c460c3f1d1cf0b"
+    },
+    "slack-gif-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "146d0f407e3f04aac0378b74bb238833b24bbd5e6387b932e82cfbf228f219b4"
+    },
+    "streamlit-to-marimo": {
+      "source": "marimo-team/skills",
+      "sourceType": "github",
+      "computedHash": "a8458d1f0bb8761860793a9252d97972b348c680af2672f625f3250d8805b646"
+    },
+    "subagent-driven-development": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "a197f8e5fba5ea59013e1adbaa90dd42db35de8f074feca200c8038de584a83b"
+    },
+    "supabase-postgres-best-practices": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "computedHash": "d606a1146be6d54fb9e73f718b5320b9acac5ff2ba2d7230a555df4b5a923b4a"
+    },
+    "systematic-debugging": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "72e9ab72627e4fd8ed26a582e82309a98ecdc4f6e1c99418430ac05682c9e91d"
+    },
+    "template-skill": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "38c88f722b574a922311d334a70c2008a2a5b896f06eaa75516d716e5725b26f"
+    },
+    "temporal-developer": {
+      "source": "temporalio/skill-temporal-developer",
+      "sourceType": "github",
+      "computedHash": "4167facca9d15d28229ee030ec94300d10a9ac7d934365955bc15d4935c69973"
     },
     "temporal-go": {
       "source": "brojonat/llmsrules",
       "sourceType": "github",
       "computedHash": "15425f819737a18c699914d78a88026dd740c13abac9ab0ba7271c5d3233ad16"
     },
-    "urfave-cli": {
+    "temporal-python": {
       "source": "brojonat/llmsrules",
       "sourceType": "github",
-      "computedHash": "1c4b7c47c44c2f0a57ad64db289614e4901709e6c4376adbea4ec8f1fec3e49c"
+      "computedHash": "16934601ce49e0000fd5950d238f943c8607a8ea1e5ecbcc6d76718b190f7e7d"
+    },
+    "test-driven-development": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "126f1ebf6ccd414f42544f6e83d8cc5adb089e1108eaffb7c400701e37eecd9f"
+    },
+    "theme-factory": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "93e78aa44f8fa00bb2c0608f400de1e1dcd6494611dd8ea27c867654240c7bcd"
+    },
+    "using-git-worktrees": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "52bbb4b6e80918e83e92a1514f3b3757712154c2a8a42de24919e48a794c54fc"
+    },
+    "using-superpowers": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "e0eced9fbb205c212f420aded0c6f2bf5d5f059254679a8459b4fe72390160be"
+    },
+    "vercel-cli-with-tokens": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "eb16b20dcbe6ce51e0372083d624e0847af1b09487ec99249227d5a8eddebfc0"
+    },
+    "vercel-composition-patterns": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "575757e3e25761c8c562d6e395d29f0b76c98b1273c0bd72d88e6ab1bc9c7d42"
+    },
+    "vercel-react-best-practices": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "ca7b0c0c6e5f2750043f7f0cd72d16ac4e2abc48f9b5500d047a4b77a2506212"
+    },
+    "vercel-react-native-skills": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "41d24eafa7c3d82e270439808f7cfbc4d51aeb2d14f2809a2267c16275784d06"
+    },
+    "verification-before-completion": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "9b446f0c7fe1cfb560b1d34439523b1a76d5f177290007b2c053a1c749a4a8ba"
+    },
+    "vitess": {
+      "source": "planetscale/database-skills",
+      "sourceType": "github",
+      "computedHash": "49fbcfc571d9e1dbdafe59dc0f757fb8c74fd296792ebf0a49ffcbda94b86dc7"
+    },
+    "wasm-compatibility": {
+      "source": "marimo-team/skills",
+      "sourceType": "github",
+      "computedHash": "9f1f2d2510d00d71422b585b057d9caa58c3adfe077172409aa872de097cb0a3"
+    },
+    "web-artifacts-builder": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "143730c6db11d82d8c5db4d0cf8f435421983f1fc510b24f77ee9a0e8bae7704"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "computedHash": "f3bc47f890f42a44db1007ab390709ec368e4b8c089baee6b0007182236ac474"
+    },
+    "webapp-testing": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "cf8e5916d474886bd67b09691247f43f331523008b7d366064bc607ab42d6302"
+    },
+    "writing-plans": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "bfaed11054ad8021c66860244e2d2e0d1eca483ae9f5fbfcb956e99c61f5c3d7"
+    },
+    "writing-skills": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "c0a92e629e39ea91b1f54da67a6aa92723008a8ef5b500c6de078f55485937c7"
+    },
+    "xlsx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "efd0c8011cf0677d8075cf93867ecec804f9a8754a777e1d2fdb46197e9c247f"
     }
   }
 }

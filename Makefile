@@ -59,11 +59,6 @@ run-nats-server:
 	@mkdir -p logs
 	nats-server -c service/nats/nats.conf 2>&1 | tee logs/nats.log
 
-run-nats-dummy-publisher: build-cli
-	@mkdir -p logs
-	$(call setup_env, service/.env.dev)
-	./cli debug publish-nats --nats-topic godxfeed.SPY --interval 150ms 2>&1 | tee logs/publisher.log
-
 # -----------------------------------------------------------------------------
 # Synthetic data source (tools/synth)
 #
@@ -121,6 +116,48 @@ tail-http-log:
 tail-nats-log:
 	tail -f logs/nats.log
 
+tail-analytics-log:
+	tail -f logs/analytics.log
+
+# -----------------------------------------------------------------------------
+# Analytics sidecar (tools/analytics)
+#
+# Python/FastAPI service that periodically publishes posterior-density
+# overlays to godxfeed.analytics.posterior.<SYMBOL>. First cut is a dummy
+# Gaussian publisher that proves the frontend overlay contract end-to-end;
+# PyMC comes later. See tools/analytics/README.md.
+# -----------------------------------------------------------------------------
+ANALYTICS_DIR := tools/analytics
+ANALYTICS_IMG := godxfeed-analytics:latest
+
+analytics-install:
+	cd $(ANALYTICS_DIR) && uv sync
+
+analytics-test:
+	cd $(ANALYTICS_DIR) && uv run pytest -v
+
+analytics-serve:
+	@mkdir -p logs
+	$(call setup_env, service/.env.dev)
+	cd $(ANALYTICS_DIR) && uv run analytics-serve 2>&1 | tee $(abspath logs/analytics.log)
+
+analytics-docker-build:
+	docker build -t $(ANALYTICS_IMG) -f $(ANALYTICS_DIR)/Dockerfile $(ANALYTICS_DIR)
+
+# Runs the container against a host-local NATS server. On macOS/Docker
+# Desktop, host.docker.internal resolves to the host; on Linux use
+# --network=host instead (edit NATS_URL to nats://localhost:4222).
+analytics-docker-run:
+	$(call setup_env, service/.env.dev)
+	docker run --rm --name godxfeed-analytics \
+		-e NATS_URL=nats://host.docker.internal:4222 \
+		-e NATS_GODXFEED_USER=$$NATS_GODXFEED_USER \
+		-e NATS_GODXFEED_PASSWORD=$$NATS_GODXFEED_PASSWORD \
+		-e ANALYTICS_SYMBOLS=$${ANALYTICS_SYMBOLS:-SPY,AAPL} \
+		-e ANALYTICS_INTERVAL_S=$${ANALYTICS_INTERVAL_S:-2.0} \
+		-p 8090:8090 \
+		$(ANALYTICS_IMG)
+
 # -----------------------------------------------------------------------------
 # tmux dev stack
 #
@@ -145,14 +182,15 @@ dev-up:
 		exit 1; \
 	fi
 	@mkdir -p logs
+	@test -f $(SYNTH_DB) || $(MAKE) synth-generate
 	tmux new-session -d -s $(TMUX_SESSION) -n nats -c $(CURDIR)
 	tmux send-keys -t $(TMUX_SESSION):nats 'make run-nats-server' C-m
 	@sleep 1
-	tmux new-window -t $(TMUX_SESSION) -n http -c $(CURDIR)
-	tmux send-keys -t $(TMUX_SESSION):http 'make run-http-dev' C-m
+	tmux new-window -t $(TMUX_SESSION) -n synth -c $(CURDIR)
+	tmux send-keys -t $(TMUX_SESSION):synth 'make synth-serve' C-m
 	@sleep 2
-	tmux new-window -t $(TMUX_SESSION) -n publisher -c $(CURDIR)
-	tmux send-keys -t $(TMUX_SESSION):publisher 'make run-nats-dummy-publisher' C-m
+	tmux new-window -t $(TMUX_SESSION) -n http -c $(CURDIR)
+	tmux send-keys -t $(TMUX_SESSION):http 'make run-http-mock' C-m
 	tmux select-window -t $(TMUX_SESSION):http
 	@echo "Started tmux session '$(TMUX_SESSION)'. Attach with: make dev-attach"
 
