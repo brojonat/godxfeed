@@ -2,6 +2,10 @@
 *.env.*
 cli
 .vscode
+.agents
+.claude
+.pi
+.DS_Store
 todo.txt
 dumps
 logs/
