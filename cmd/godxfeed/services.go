@@ -9,6 +9,7 @@ import (
 	"github.com/brojonat/godxfeed/service"
 	"github.com/brojonat/godxfeed/service/analytics"
 	_ "github.com/brojonat/godxfeed/service/analytics" // blank import to trigger timescale registration
+	"github.com/brojonat/godxfeed/service/llm"
 	"github.com/urfave/cli/v2"
 )
 
@@ -158,6 +159,8 @@ func serve_http(ctx *cli.Context) error {
 		}
 	}
 
+	llmRegistry := buildLLMRegistry(ctx, log)
+
 	return ghttp.RunHTTPServer(
 		ctx.Context,
 		tts,
@@ -166,7 +169,63 @@ func serve_http(ctx *cli.Context) error {
 		ctx.String("dxfeed-endpoint"),
 		ctx.String("nats-browser-url"),
 		ctx.Bool("dev-mode"),
+		llmRegistry,
 	)
+}
+
+// buildLLMRegistry inspects the LLM-related flags/envs and constructs
+// one Provider per configured key. Missing keys = that provider isn't
+// registered, and /nl-subscribe will 400 if the caller asks for it.
+// The default provider is whichever --llm-default names, as long as
+// it's actually registered; otherwise the first successfully-built
+// provider wins (alphabetical) so there's always *some* usable default
+// when at least one key is configured.
+func buildLLMRegistry(ctx *cli.Context, log *slog.Logger) ghttp.ProviderRegistry {
+	reg := ghttp.ProviderRegistry{Providers: map[string]llm.Provider{}}
+
+	if key := ctx.String("anthropic-api-key"); key != "" {
+		reg.Providers["anthropic"] = llm.NewAnthropicProvider(key, orDefault(ctx.String("anthropic-model"), "claude-opus-4-7"))
+	}
+	if key := ctx.String("openai-api-key"); key != "" {
+		reg.Providers["openai"] = llm.NewOpenAIProvider(key, orDefault(ctx.String("openai-model"), "gpt-4o"))
+	}
+	if key := ctx.String("gemini-api-key"); key != "" {
+		reg.Providers["gemini"] = llm.NewGeminiProvider(key, orDefault(ctx.String("gemini-model"), "gemini-2.5-pro"))
+	}
+
+	// Default: honor --llm-default if it names a registered provider;
+	// otherwise pick deterministically (alphabetical first) so callers
+	// that omit the "provider" field on a request still work.
+	want := ctx.String("llm-default")
+	if _, ok := reg.Providers[want]; ok {
+		reg.Default = want
+	} else if len(reg.Providers) > 0 {
+		// Pick in a stable order so restarts don't silently switch.
+		for _, name := range []string{"anthropic", "openai", "gemini"} {
+			if _, ok := reg.Providers[name]; ok {
+				reg.Default = name
+				break
+			}
+		}
+	}
+
+	if len(reg.Providers) == 0 {
+		log.Info("no LLM providers configured; /nl-subscribe will 503")
+	} else {
+		names := make([]string, 0, len(reg.Providers))
+		for n := range reg.Providers {
+			names = append(names, n)
+		}
+		log.Info("LLM providers registered", "providers", names, "default", reg.Default)
+	}
+	return reg
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }
 
 // resolveStreamSymbols applies the --symbol-method strategy to the raw symbol

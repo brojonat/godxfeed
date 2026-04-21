@@ -4,6 +4,35 @@ Notable changes, newest first. Follows [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+### Added
+- **`POST /nl-subscribe` — natural-language subscription endpoint.**
+  Body `{text, provider?}`. A provider-agnostic `llm.Provider`
+  interface (Anthropic / OpenAI / Gemini) extracts a structured
+  `FilterSpec` from the trader's text; a deterministic `llm.Resolver`
+  expands the filter against tastytrade's option-chain REST into
+  concrete `(event, symbol)` pairs; `service.BulkAddSubscriptions`
+  dispatches them in a single wire call. The LLM never sees the
+  option chain — its only job is intent extraction — so prompts stay
+  small and responses stay testable. All provider implementations use
+  plain `net/http` (no SDK bloat) with forced structured output
+  (Anthropic: `tool_choice` + `input_schema`; OpenAI: strict
+  `response_format.json_schema`; Gemini: `responseSchema` +
+  `responseMimeType=application/json`). New CLI flags:
+  `--anthropic-api-key`/`--openai-api-key`/`--gemini-api-key` (and
+  matching `--*-model` + `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/
+  `GEMINI_API_KEY` envs) enable each provider independently;
+  `--llm-default` picks the one used when the request body omits
+  `provider`. Missing keys = provider isn't registered; zero keys =
+  endpoint 503s. New package `service/llm` with 35 unit tests (schema
+  + resolver + one test suite per provider against
+  `httptest.NewServer`); new handler tests in `http/handlers_nl_test.go`
+  cover the HTTP contract (happy path, 400 on unknown provider, 502
+  on LLM error, 503 when no providers registered, non-default
+  provider selection). Exported `service.SubjectFor(event, symbol)`
+  so the handler can synthesize Phase-3 subjects in its response
+  without re-implementing the scheme. New `service.BulkAddSubscriptions`
+  method on the Service interface.
+
 ### Changed
 - **Phase 3: multi-event-type NATS subjects.** The dxLink ingress now
   publishes under `godxfeed.<event>.<symbol>` (e.g. `godxfeed.quote.SPY`,

@@ -369,9 +369,69 @@ All bearer-gated:
 
 - `GET /dxlink/status` → `{connected, authenticated, dxlinkURL}`
 - `GET /dxlink/subscriptions` → `[{event, symbol, subject, msgCount, firstSeenAt, lastSeenAt}]`
+- `POST /dxlink/subscriptions` — `{event, symbol}` adds one sub on the live feed.
+- `DELETE /dxlink/subscriptions` — `{event, symbol}` removes one sub.
+- `POST /nl-subscribe` — `{text, provider?}` translates natural-language
+  requests ("SPY calls 250-270 expiring in March") into concrete
+  subscriptions. See [Natural-language subscriptions](#natural-language-subscriptions).
 - `GET /ping` → sanity check
 - `GET /streamer-token` → fetches a fresh dxFeed streamer token via the
   service's OAuth flow (useful for debugging)
+
+## Natural-language subscriptions
+
+`POST /nl-subscribe` lets callers express subscription intent in plain
+English rather than constructing `(event, symbol)` pairs by hand —
+particularly useful for options, whose streamer symbols
+(`.SPY260320C500`) encode expiry, kind, and strike cryptically.
+
+Two-stage pipeline:
+1. An LLM (Anthropic / OpenAI / Gemini, picked by request body or
+   configured default) extracts a structured `FilterSpec` from the
+   user's text. The LLM never sees the option chain — it only parses
+   intent.
+2. A deterministic resolver expands the filter against tastytrade's
+   `/option-chains/<root>` and emits one `(event, symbol)` per match,
+   sorted by `(expiry, strike, kind)`. All filtering is in-process
+   and auditable.
+
+```bash
+curl -sX POST -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"SPY calls between 250 and 270 expiring in March, include the underlying"}' \
+  http://localhost:8080/nl-subscribe
+```
+
+Response echoes the FilterSpec and the concrete subs that landed:
+
+```json
+{
+  "provider": "anthropic",
+  "filter": {
+    "root": "SPY",
+    "event_types": ["Quote"],
+    "kind": "call",
+    "expiry_window": {"min": "2026-03-01", "max": "2026-03-31"},
+    "strike_window": {"min": 250, "max": 270},
+    "include_equity": true
+  },
+  "subs": [
+    {"event": "Quote", "symbol": "SPY", "subject": "godxfeed.quote.SPY"},
+    {"event": "Quote", "symbol": ".SPY260320C250", "subject": "godxfeed.quote..SPY260320C250"}
+  ]
+}
+```
+
+Provider configuration is per-key: supply only the credentials you
+have. Each enables the matching provider name.
+
+```bash
+# service/.env.dev (or exported envs)
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AI...
+LLM_DEFAULT=anthropic   # used when POST body omits "provider"
+```
 
 ## Deployment
 

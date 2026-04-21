@@ -24,11 +24,14 @@ type FeedEvent struct {
 	Symbol  string
 }
 
-// subjectFor returns the NATS subject for an (event, symbol) pair. The scheme
+// SubjectFor returns the NATS subject for an (event, symbol) pair. The scheme
 // is `godxfeed.<event>.<symbol>` with the event type lowercased. Consumers
 // that want a specific event type subscribe to `godxfeed.<event>.>`; the
 // legacy single-token `godxfeed.*` pattern no longer matches anything.
-func subjectFor(event, symbol string) string {
+//
+// Exported so HTTP handlers (e.g. /nl-subscribe) can synthesize the same
+// subject the ingress will publish under, without re-implementing the scheme.
+func SubjectFor(event, symbol string) string {
 	return "godxfeed." + strings.ToLower(event) + "." + symbol
 }
 
@@ -79,7 +82,7 @@ func parseFeedData(data json.RawMessage) ([]FeedEvent, error) {
 			continue
 		}
 		out = append(out, FeedEvent{
-			Subject: subjectFor(hdr.EventType, hdr.EventSymbol),
+			Subject: SubjectFor(hdr.EventType, hdr.EventSymbol),
 			Payload: raw,
 			Event:   hdr.EventType,
 			Symbol:  hdr.EventSymbol,

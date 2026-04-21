@@ -108,7 +108,7 @@ func (m *SubscriptionManager) BulkAdd(pairs []struct{ Event, Symbol string }) er
 		if _, exists := m.state[k]; exists {
 			continue
 		}
-		m.state[k] = &subState{subject: subjectFor(sub.Event, sub.Symbol)}
+		m.state[k] = &subState{subject: SubjectFor(sub.Event, sub.Symbol)}
 	}
 	return nil
 }
@@ -140,7 +140,7 @@ func (m *SubscriptionManager) Add(event, symbol string) error {
 	if _, exists := m.state[k]; exists {
 		return nil
 	}
-	m.state[k] = &subState{subject: subjectFor(event, symbol)}
+	m.state[k] = &subState{subject: SubjectFor(event, symbol)}
 	return nil
 }
 

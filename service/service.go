@@ -68,6 +68,12 @@ type Service interface {
 	AddSubscription(event, symbol string) error
 	// RemoveSubscription removes a single (event, symbol) subscription.
 	RemoveSubscription(event, symbol string) error
+	// BulkAddSubscriptions adds a batch of (event, symbol) pairs in a
+	// single wire call. Used by `/nl-subscribe` to apply a resolved
+	// FilterSpec in one shot — cheaper than N AddSubscription calls.
+	// Pairs already present are silently skipped (same semantics as
+	// Add). Errors if StartIngress hasn't run yet.
+	BulkAddSubscriptions(pairs []struct{ Event, Symbol string }) error
 
 	// Subscriptions returns the current dxLink subscription state snapshot.
 	Subscriptions() []SubscriptionInfo
@@ -197,6 +203,18 @@ func (s *service) RemoveSubscription(event, symbol string) error {
 		return fmt.Errorf("RemoveSubscription: ingress not started")
 	}
 	return m.Remove(event, symbol)
+}
+
+// BulkAddSubscriptions adds a batch of (event, symbol) pairs in a
+// single wire call. Existing pairs are silently skipped.
+func (s *service) BulkAddSubscriptions(pairs []struct{ Event, Symbol string }) error {
+	s.dxMu.RLock()
+	m := s.subs
+	s.dxMu.RUnlock()
+	if m == nil {
+		return fmt.Errorf("BulkAddSubscriptions: ingress not started")
+	}
+	return m.BulkAdd(pairs)
 }
 
 func (s *service) DXLinkStatus() DXLinkStatus {

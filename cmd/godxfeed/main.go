@@ -220,6 +220,45 @@ func main() {
 								Name:  "dev-mode",
 								Usage: "Load templates and static files from disk rather than the binary.",
 							},
+							// LLM providers for /nl-subscribe. Each
+							// provider is optional — supply only the
+							// keys you have. Missing keys ⇒ that
+							// provider isn't registered.
+							&cli.StringFlag{
+								Name:    "anthropic-api-key",
+								EnvVars: []string{"ANTHROPIC_API_KEY"},
+								Usage:   "Anthropic API key; enables the 'anthropic' provider for /nl-subscribe.",
+							},
+							&cli.StringFlag{
+								Name:    "anthropic-model",
+								EnvVars: []string{"ANTHROPIC_MODEL"},
+								Usage:   "Anthropic model ID (default claude-opus-4-7).",
+							},
+							&cli.StringFlag{
+								Name:    "openai-api-key",
+								EnvVars: []string{"OPENAI_API_KEY"},
+								Usage:   "OpenAI API key; enables the 'openai' provider for /nl-subscribe.",
+							},
+							&cli.StringFlag{
+								Name:    "openai-model",
+								EnvVars: []string{"OPENAI_MODEL"},
+								Usage:   "OpenAI model ID (default gpt-4o).",
+							},
+							&cli.StringFlag{
+								Name:    "gemini-api-key",
+								EnvVars: []string{"GEMINI_API_KEY"},
+								Usage:   "Gemini API key; enables the 'gemini' provider for /nl-subscribe.",
+							},
+							&cli.StringFlag{
+								Name:    "gemini-model",
+								EnvVars: []string{"GEMINI_MODEL"},
+								Usage:   "Gemini model ID (default gemini-2.5-pro).",
+							},
+							&cli.StringFlag{
+								Name:    "llm-default",
+								EnvVars: []string{"LLM_DEFAULT"},
+								Usage:   "Default LLM provider when /nl-subscribe omits one (anthropic|openai|gemini).",
+							},
 						),
 						Action: serve_http,
 					},

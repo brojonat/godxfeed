@@ -98,8 +98,17 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
       contract. 5% log-return outlier cap handles synth-lap wraparound
       artifacts. First fit pays ~10s PyTensor compile; subsequent
       fits 1-3s on N≈60 ticks.
-- [ ] LLM-driven voice/text → `POST /dxlink/subscriptions` translation (depends
-      on Phase 2).
+- [x] LLM-driven text → subscription translation. Done 2026-04-20:
+      `POST /nl-subscribe` accepts `{text, provider?}`, extracts a
+      structured `FilterSpec` via a provider-agnostic `llm.Provider`
+      interface (Anthropic / OpenAI / Gemini implementations, each
+      configured by env/flag), then deterministically resolves the
+      filter to concrete `(event, symbol)` pairs against tastytrade
+      symbology and dispatches via `BulkAddSubscriptions`. The LLM
+      never sees the option chain — it only parses intent; the
+      resolver owns all expiry/strike/kind filtering. 35 llm-package
+      tests + 6 handler tests. Voice input deferred to a separate
+      frontend task; text handles every current use case.
 - [ ] **Refactor analytics sidecar to read quotes from NATS JetStream**
       instead of the analytic store (TimescaleDB). JetStream gives a
       replay-capable, low-latency buffer that's already the source of
@@ -110,6 +119,21 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
       Requires enabling JetStream on the NATS server and adding a
       stream over `godxfeed.>` with a short retention window
       (e.g. 5-10 min, matching the fit-window budget).
+
+## Follow-ups on LLM subscription interface
+
+- [ ] `/nl-subscribe` admin UI — single text box on `/admin` that POSTs
+      to the endpoint and renders the echo'd FilterSpec + resolved
+      subs for confirmation before (or after) dispatch. Back-end is
+      done; this is pure frontend.
+- [ ] Voice input wrapper — Web Speech API → `/nl-subscribe`. Zero
+      server change required.
+- [ ] Prompt-eval loop — golden cases (e.g. "next Friday's SPY calls"
+      against a fixed date) to catch drift between provider upgrades.
+- [ ] Option streamer symbols start with `.` — once options flow
+      through, handle the NATS subject collision
+      (`godxfeed.greeks..SPY260320C500` has an empty middle token).
+      See LEARNINGS for the two fix options.
 
 ## UI polish
 

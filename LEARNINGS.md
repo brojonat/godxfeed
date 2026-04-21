@@ -180,6 +180,66 @@ discover its own port. Logged in TODO as "pre-existing teardown leak /
 keepalive panic."
 
 
+## Narrow the LLM's job to extraction, not selection
+
+**What:** First pass at `/nl-subscribe` planned to feed the LLM the
+whole option chain (hundreds of strikes/expiries) and let it pick
+which to subscribe. Pivoted to a two-stage pipeline instead: LLM
+extracts a `FilterSpec` (root + kind + expiry window + strike
+window), and a deterministic Go resolver applies that filter against
+the chain.
+
+**Why surprising:** The "open-ended picker" approach *feels* more
+model-native — you're leveraging the LLM's judgment. But it trades
+three concrete wins for zero real gains: (1) prompts shrink from
+~50 KB option-chain blobs to ~500 bytes of user text, so cost and
+latency collapse; (2) filter logic becomes unit-testable with
+no LLM in the loop (12 resolver tests cover every edge case —
+unreachable in any "just ask the model" design); (3) auditability —
+"why did these 8 strikes get subscribed" is a trivial filter trace
+instead of a prompt-engineering mystery.
+
+**Fix direction:** Every time you're tempted to let an LLM make
+structured selections over a known dataset, ask: *could this be
+`filter(dataset, llm_extracted_spec)` instead of
+`llm(dataset + prompt)`?* Usually yes, and the non-LLM half is
+where all the testing leverage lives.
+
+## Each major LLM provider has a different way to force JSON output
+
+**What:** Building provider-agnostic `llm.Provider` implementations
+for Anthropic / OpenAI / Gemini. Wanted a single JSON Schema + a
+single prompt to flow through all three. In practice each provider
+forces structured output via a different API:
+
+- **Anthropic**: define a tool with `input_schema`, then use
+  `tool_choice: {type: "tool", name: "..."}` to force the model to
+  call it. Response is a `tool_use` block with `input` as the
+  parsed JSON object.
+- **OpenAI**: `response_format: {type: "json_schema", json_schema:
+  {schema, strict: true}}`. Response content is a JSON *string*
+  matching the schema. Refusals surface as a non-empty `refusal`
+  field on the message.
+- **Gemini**: `generationConfig: {responseMimeType:
+  "application/json", responseSchema: <schema>}`. Response text is
+  the JSON string. Gemini's schema dialect also doesn't accept
+  `type: ["X", "null"]` unions — nullable fields use
+  `nullable: true`.
+
+**Why surprising:** The "force structured output" feature seemed
+commoditized across providers, so sharing one wire format seemed
+plausible. The error paths alone make that impossible: refusals,
+content-policy blocks, non-STOP finish reasons each surface at a
+different JSON path.
+
+**Fix direction:** Keep the shared abstraction at the *semantic*
+level — `Extract(text, now time.Time) (FilterSpec, error)` — and let
+each provider own its own wire adapter. Shared JSON schema as a
+constant, but provider-specific normalization (e.g. Gemini's
+`nullable`) is a one-function translation. Every provider test uses
+`httptest.NewServer` to pin the exact request/response bytes —
+that's what catches regressions when an upstream tweaks its API.
+
 ## dxLink `AcceptEventFields` is strictly a COMPACT-mode knob
 
 **What:** Phase 3 widens `dxclient.client.OpenFeed`'s `FEED_SETUP.AcceptEventFields`

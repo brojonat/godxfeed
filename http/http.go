@@ -68,6 +68,7 @@ func RunHTTPServer(
 	dxEndpoint string,
 	natsBrowserURL string,
 	devMode bool,
+	llmRegistry ProviderRegistry,
 ) error {
 
 	// new router
@@ -179,6 +180,15 @@ func RunHTTPServer(
 	))
 	mux.Handle("DELETE /dxlink/subscriptions", adaptHandler(
 		handleRemoveSubscription(tts),
+		apiMode(tts, maxBytes, headers, methods, origins),
+		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
+	))
+
+	// Natural-language → FilterSpec → resolved subscriptions. The
+	// LLM extracts intent; tastytrade symbology turns it into concrete
+	// (event, symbol) pairs. See service/llm.
+	mux.Handle("POST /nl-subscribe", adaptHandler(
+		handleNLSubscribe(tts, llmRegistry),
 		apiMode(tts, maxBytes, headers, methods, origins),
 		atLeastOneAuth(bearerAuthorizerCtxSetToken(getSecretKey)),
 	))
