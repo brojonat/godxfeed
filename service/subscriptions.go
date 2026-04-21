@@ -72,11 +72,11 @@ func NewSubscriptionManager(fc FeedController) *SubscriptionManager {
 }
 
 // BulkAdd starts a batch of subscriptions in a single wire call. Use for
-// initial startup — N sequential Add calls race the dxclient's handler
-// dispatch (the ack for call #2 can arrive before call #2's handler is
-// registered, because the handler from call #1 unblocks the next loop
-// iteration before call #2's register runs). One batched UpdateSubscription
-// needs only one ack, so there's no window.
+// initial startup — one FEED_SUBSCRIPTION frame carrying all symbols is
+// cheaper than N frames, and it keeps the per-item state writes
+// contiguous under the manager lock. (The old rationale — race-avoiding
+// an ack handler — evaporated once FEED_SUBSCRIPTION became
+// fire-and-forget; efficiency is the only reason left.)
 //
 // Pairs already present are skipped silently (see Add for rationale).
 func (m *SubscriptionManager) BulkAdd(pairs []struct{ Event, Symbol string }) error {
@@ -108,7 +108,7 @@ func (m *SubscriptionManager) BulkAdd(pairs []struct{ Event, Symbol string }) er
 		if _, exists := m.state[k]; exists {
 			continue
 		}
-		m.state[k] = &subState{subject: subjectFor(sub.Symbol)}
+		m.state[k] = &subState{subject: subjectFor(sub.Event, sub.Symbol)}
 	}
 	return nil
 }
@@ -140,7 +140,7 @@ func (m *SubscriptionManager) Add(event, symbol string) error {
 	if _, exists := m.state[k]; exists {
 		return nil
 	}
-	m.state[k] = &subState{subject: subjectFor(symbol)}
+	m.state[k] = &subState{subject: subjectFor(event, symbol)}
 	return nil
 }
 

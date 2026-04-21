@@ -1,7 +1,7 @@
 # godxfeed-analytics
 
 Periodic posterior-predictive overlay publisher for godxfeed. Subscribes
-to `godxfeed.*`, buffers the last ~60s of mid prices per symbol, and
+to `godxfeed.quote.>`, buffers the last ~60s of mid prices per symbol, and
 every `ANALYTICS_INTERVAL_S` fits a Bayesian GBM model in PyMC on the
 trailing 30s:
 

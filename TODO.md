@@ -5,12 +5,46 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
 
 ## Active / near-term
 
-- [ ] **Remove BuyMeACoffee.** Delete `POST /webhook/buy-me-a-coffee`
-      (`http/handlers_webhook.go`), any BMC-signature middleware, the
-      SendGrid-based JWT-email path (`service/email.go` if BMC-only),
-      related env vars (`BMC_*`, `SENDGRID_*`), the README section,
-      and any Makefile / CI references. Token issuance stays — it's
-      now purely `POST /token` basic-auth gated.
+- [x] **[CRITICAL] Fix `UpdateSubscription` FEED_CONFIG wait against real
+      tastytrade.** Done 2026-04-20: `UpdateSubscription` is now
+      fire-and-forget per the dxLink spec (FEED_CONFIG is only emitted
+      in response to FEED_SETUP); `OpenFeed` still awaits it once
+      post-FEED_SETUP, which is correct. Mocks in
+      `dxclient/feed_test.go` and `tools/synth/serve.py` updated to
+      match real tastytrade (no reply to FEED_SUBSCRIPTION). Added
+      `TestUpdateSubscription_ReturnsWithoutAck` as regression guard.
+      Verified end-to-end on live SPY/QQQ/AAPL: POST/DELETE now return
+      immediately and `/dxlink/subscriptions` stays in lockstep with
+      wire state.
+- [x] **[CRITICAL] `SubscriptionManager` bookkeeping desync.** Resolved
+      as a side effect of the fix above — with `UpdateSubscription` no
+      longer timing out, there's no spurious rollback and state stays
+      in lockstep with the wire. Remaining error paths (`Send` failures)
+      are genuine "frame didn't leave" cases where rollback is correct.
+- [x] **Start dxLink ingress unconditionally.** Done 2026-04-20:
+      dropped the `len(syms) > 0` guard in
+      `cmd/godxfeed/services.go` so the feed channel opens at boot
+      regardless, and runtime `POST /dxlink/subscriptions` works
+      against an empty-boot server. `BulkAdd` already short-circuits
+      on an empty pair list, so no service-side change was needed.
+      Closes `artifacts/validation-report.html` Finding 3.
+- [x] Timescale sink log noise. Done 2026-04-20: narrowed the
+      sink's subscription subject from `godxfeed.>` to `godxfeed.*`
+      so it no longer receives (and tries to parse) analytics
+      messages published on `godxfeed.analytics.<type>.<symbol>`.
+      Closes `artifacts/validation-report.html` Finding 4. Phase 3
+      moved the filter to `godxfeed.quote.>` (the sink is still
+      Quote-only — Greeks/TheoPrice/Underlying have different
+      payload shapes).
+- [x] **Remove BuyMeACoffee.** Done 2026-04-20: deleted
+      `http/handlers_webhook.go`, `service/email.go`, the
+      `bmcWebhookAuthorizer` + `getWebhookSecret` in
+      `http/middleware.go`, the `POST /webhook/buy-me-a-coffee`
+      route in `http/http.go`, the Payment/Subscriptions README
+      section, the `BMC_WEBHOOK_SECRET` / `SENDGRID_*` entries in
+      `.env.dev`, and the `sendgrid-go` dependency via
+      `go mod tidy`. Token issuance stays — `POST /token`
+      basic-auth remains the sole minting path.
 - [x] **Frontend analytic overlay routing.** `admin_plots.js` now
       routes messages by shape on the shared `godxfeed.>` wildcard:
       Quote events feed the histogram buffer, analytic messages
@@ -20,9 +54,11 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
       histogram bars. Adding a new analytic type = one branch in the
       classifier + one render branch. The Python producer is still
       out of scope here (see the σ-sidecar item below).
-- [ ] Smoke-test the dxLink ingress against a live tastytrade sandbox
-      subscription (market-hours dependent) — now exercises Phase 2's
-      dynamic add/remove too.
+- [x] Smoke-test the dxLink ingress against a live tastytrade sandbox
+      subscription (market-hours dependent) — done 2026-04-20, see
+      `artifacts/validation-report.html`. Surfaced 3 bugs (tracked
+      below); OAuth, handshake, boot-time subs, NATS fanout, and the
+      PyMC sidecar all worked cleanly end-to-end.
 - [x] Full Go↔Python synth-mode smoke test: confirmed quotes flow
       through `/admin` + NATS (SPY 218 msgs, AAPL 7 msgs after a
       remove→re-add cycle via the DELETE/POST endpoints). See
@@ -32,11 +68,18 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
       form/table controls on `/admin`. (dxclient split into
       OpenFeed+UpdateSubscription; SubscriptionManager now owns the
       dxclient.)
-- [ ] Phase 3 data model: multi-event-type subjects (`godxfeed.quote.SPY`,
-      `godxfeed.greeks.<opt>`, `godxfeed.theoprice.<opt>`,
-      `godxfeed.underlying.<sym>`) and widen the dxLink `FEED_SUBSCRIPTION` to
-      match. FEED_SETUP's AcceptEventFields is still hard-coded to Quote —
-      that's the wire-level knob Phase 3 needs to widen.
+- [x] Phase 3 data model: multi-event-type subjects
+      (`godxfeed.quote.SPY`, `godxfeed.greeks.<opt>`,
+      `godxfeed.theoprice.<opt>`, `godxfeed.underlying.<sym>`) and
+      widen the dxLink `FEED_SETUP.AcceptEventFields` to match. Done
+      2026-04-20: `service.subjectFor` now takes `(event, symbol)`;
+      the timescale sink and analytics sidecar moved to
+      `godxfeed.quote.>`; `/stream` accepts an `event` param
+      (defaults to `quote`); frontend JS consumes the server-returned
+      subject directly. Verified end-to-end against synth — runtime
+      `POST /dxlink/subscriptions` with `(Greeks, TSLA)` now
+      dispatches `godxfeed.greeks.TSLA` through the wire. See
+      CHANGELOG entry for full surface.
 - [x] Analytics sidecar scaffold (`tools/analytics/`). Python/FastAPI
       service that periodically publishes posterior densities to
       `godxfeed.analytics.posterior.<SYMBOL>`. First cut emits a dummy
@@ -57,6 +100,16 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
       fits 1-3s on N≈60 ticks.
 - [ ] LLM-driven voice/text → `POST /dxlink/subscriptions` translation (depends
       on Phase 2).
+- [ ] **Refactor analytics sidecar to read quotes from NATS JetStream**
+      instead of the analytic store (TimescaleDB). JetStream gives a
+      replay-capable, low-latency buffer that's already the source of
+      truth for the firehose — fitting models off TSDB adds a slow hop
+      and couples the model loop to sink health. Eventually richer
+      models that need historical joins can still read from the
+      analytic store; for now JetStream is faster and sufficient.
+      Requires enabling JetStream on the NATS server and adding a
+      stream over `godxfeed.>` with a short retention window
+      (e.g. 5-10 min, matching the fit-window budget).
 
 ## UI polish
 
@@ -108,8 +161,27 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
 - [ ] Second analytic sink implementation to validate the interface —
       candidates: `file://` (JSONL append), `clickhouse://`, `parquet://`.
 
+## Product / business model
+
+- [ ] **Think through the "model" for this project.** Selling hosted
+      access is probably off the table — redistributing dxFeed/
+      tastytrade data almost certainly violates their TOS even if we
+      wrap it in our own service. The cleanest alternative: keep this
+      a clone-and-run tool for day traders who already have their own
+      tastytrade OAuth grant. That collapses our infra exposure to
+      zero and the repo becomes the product. Monetization paths that
+      don't involve reselling data: a tip jar in the README, GitHub
+      Sponsors for people who find it useful, or a pitch to devtool
+      companies (Warp, Tailscale, etc.) once there's enough traction
+      to matter. Open question worth checking before committing: does
+      hosting a "bring-your-own-grant" multi-tenant version — where
+      each tenant's grant authenticates their own feed — fall inside
+      or outside the TOS? That'd be a middle ground.
+
 ## Docs / tooling
 
-- [ ] Market-hours smoke test run + refresh the
-      `artifacts/validation-report.html` against real quotes.
+- [x] Market-hours smoke test run + refresh the
+      `artifacts/validation-report.html` against real quotes. Done
+      2026-04-20 on SPY/QQQ/AAPL; report + raw logs under
+      `artifacts/validation-report/`.
 - [ ] Document the admin page screenshots / usage in README once Phase 2 lands.

@@ -173,9 +173,12 @@ func (c *client) Authenticate(token string) error {
 }
 
 // OpenFeed opens the long-lived FEED service channel and completes the
-// FEED_SETUP handshake. The channel ID is stashed on the client so
-// subsequent UpdateSubscription calls can reuse it. Thread-safe, but
-// calling it twice on the same client is a protocol violation and errors.
+// FEED_SETUP handshake, blocking until the server's FEED_CONFIG ack
+// arrives (per the dxLink spec, FEED_CONFIG is only emitted in response
+// to FEED_SETUP, not to subsequent FEED_SUBSCRIPTION frames). The channel
+// ID is stashed on the client so subsequent UpdateSubscription calls can
+// reuse it. Thread-safe, but calling it twice on the same client is a
+// protocol violation and errors.
 func (c *client) OpenFeed() error {
 	c.lock.Lock()
 	if c.feedChannelID != 0 {
@@ -193,15 +196,50 @@ func (c *client) OpenFeed() error {
 		return fmt.Errorf("OpenFeed: open channel: %w", err)
 	}
 
-	if err := c.awaitFeedConfig(cid, func() error {
-		return c.Send(MessageFeedSetup{
-			MessageBase:             MessageBase{Type: MESSAGE_TYPE_FEED_SETUP, Channel: cid},
-			AcceptAggregationPeriod: 1.0,
-			AcceptEventFields:       map[string][]string{"Quote": {"eventType", "eventSymbol", "bidPrice", "askPrice", "bidSize", "askSize"}},
-			AcceptDataFormat:        FEED_DATA_FORMAT_FULL,
-		})
+	done := make(chan struct{}, 1)
+	hid := fmt.Sprintf("_onFeedConfig-%s", uuid.New())
+	c.lock.Lock()
+	c.handlers[hid] = func(m Message) {
+		msg, ok := m.(MessageFeedConfig)
+		if !ok || msg.Channel != cid {
+			return
+		}
+		c.removeMessageHandler(hid)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+	}
+	c.lock.Unlock()
+
+	if err := c.Send(MessageFeedSetup{
+		MessageBase:             MessageBase{Type: MESSAGE_TYPE_FEED_SETUP, Channel: cid},
+		AcceptAggregationPeriod: 1.0,
+		// Declare interest in all event types the project currently cares
+		// about. AcceptEventFields is strictly meaningful in COMPACT data
+		// mode; in FULL (what we use) the server sends every field. Listing
+		// the event types explicitly still tells the server which streams
+		// the client wants to open, so a later FEED_SUBSCRIPTION with
+		// `type: "Greeks"` isn't rejected.
+		AcceptEventFields: map[string][]string{
+			"Quote":      {"eventType", "eventSymbol", "bidPrice", "askPrice", "bidSize", "askSize"},
+			"Greeks":     {"eventType", "eventSymbol", "price", "volatility", "delta", "gamma", "theta", "rho", "vega"},
+			"TheoPrice":  {"eventType", "eventSymbol", "price", "underlyingPrice", "delta", "gamma", "dividend", "interest"},
+			"Underlying": {"eventType", "eventSymbol", "volatility", "frontVolatility", "backVolatility", "putCallRatio"},
+		},
+		AcceptDataFormat: FEED_DATA_FORMAT_FULL,
 	}); err != nil {
+		c.removeMessageHandler(hid)
 		return fmt.Errorf("OpenFeed: feed setup: %w", err)
+	}
+
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		c.removeMessageHandler(hid)
+		return fmt.Errorf("OpenFeed: timeout waiting for FEED_CONFIG on channel %d", cid)
 	}
 
 	c.lock.Lock()
@@ -211,8 +249,13 @@ func (c *client) OpenFeed() error {
 }
 
 // UpdateSubscription sends an incremental FEED_SUBSCRIPTION on the open
-// feed channel. Fails fast if OpenFeed has not been called — otherwise a
-// caller bug would silently leak FEED_SUBSCRIPTION onto control channel 0.
+// feed channel. Per the dxLink spec, FEED_SUBSCRIPTION is fire-and-forget:
+// the server does not emit a FEED_CONFIG or any other ack — the arrival
+// of FEED_DATA for the new symbol is the only implicit acknowledgement.
+// Returns once the frame has been written to the websocket.
+//
+// Fails fast if OpenFeed has not been called — otherwise a caller bug
+// would silently leak FEED_SUBSCRIPTION onto control channel 0.
 func (c *client) UpdateSubscription(add, remove []FeedSub) error {
 	c.lock.RLock()
 	cid := c.feedChannelID
@@ -229,55 +272,12 @@ func (c *client) UpdateSubscription(add, remove []FeedSub) error {
 		return out
 	}
 
-	return c.awaitFeedConfig(cid, func() error {
-		return c.Send(MessageFeedRegularSubscription{
-			MessageBase: MessageBase{Type: MESSAGE_TYPE_FEED_SUBSCRIPTION, Channel: cid},
-			Add:         toWire(add),
-			Remove:      toWire(remove),
-			Reset:       false,
-		})
+	return c.Send(MessageFeedRegularSubscription{
+		MessageBase: MessageBase{Type: MESSAGE_TYPE_FEED_SUBSCRIPTION, Channel: cid},
+		Add:         toWire(add),
+		Remove:      toWire(remove),
+		Reset:       false,
 	})
-}
-
-// awaitFeedConfig registers a one-shot MessageFeedConfig handler for the
-// supplied channel, invokes send (which should emit FEED_SETUP or
-// FEED_SUBSCRIPTION), and blocks until the server's FEED_CONFIG ack
-// arrives or the 30s timeout trips. Factoring this out keeps OpenFeed and
-// UpdateSubscription symmetric and lets them share a single bug fix
-// surface.
-func (c *client) awaitFeedConfig(channel int, send func() error) error {
-	done := make(chan error, 1)
-	hid := fmt.Sprintf("_onFeedConfig-%s", uuid.New())
-
-	c.lock.Lock()
-	c.handlers[hid] = func(m Message) {
-		msg, ok := m.(MessageFeedConfig)
-		if !ok || msg.Channel != channel {
-			return
-		}
-		c.removeMessageHandler(hid)
-		select {
-		case done <- nil:
-		default:
-		}
-	}
-	c.lock.Unlock()
-
-	timer := time.NewTimer(30 * time.Second)
-	defer timer.Stop()
-
-	if err := send(); err != nil {
-		c.removeMessageHandler(hid)
-		return err
-	}
-
-	select {
-	case err := <-done:
-		return err
-	case <-timer.C:
-		c.removeMessageHandler(hid)
-		return fmt.Errorf("timeout waiting for FEED_CONFIG on channel %d", channel)
-	}
 }
 
 // C returns a channel of messages that are sent to the client.

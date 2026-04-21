@@ -13,7 +13,12 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-const natsSubject = "godxfeed.>"
+// Phase 3 subject scheme: `godxfeed.<event>.<symbol>`. The sink is
+// intentionally quote-only — Greeks / TheoPrice / Underlying carry a
+// different payload shape and would need their own hypertables.
+// `godxfeed.quote.>` matches `godxfeed.quote.SPY`, `godxfeed.quote.AAPL`,
+// and any further token-depth we add under quote (e.g. per-venue).
+const natsSubject = "godxfeed.quote.>"
 
 func init() {
 	// pgx accepts both `postgres://` and `postgresql://` — register both so
@@ -22,8 +27,8 @@ func init() {
 	RegisterSink("postgresql", newTimescaleSink)
 }
 
-// timescaleSink subscribes to godxfeed.> and batches incoming Quote events
-// into the symbol_bid_ask hypertable.
+// timescaleSink subscribes to godxfeed.quote.> and batches incoming Quote
+// events into the symbol_bid_ask hypertable.
 type timescaleSink struct {
 	dsn  string
 	nc   *nats.Conn

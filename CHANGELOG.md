@@ -4,6 +4,130 @@ Notable changes, newest first. Follows [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+### Changed
+- **Phase 3: multi-event-type NATS subjects.** The dxLink ingress now
+  publishes under `godxfeed.<event>.<symbol>` (e.g. `godxfeed.quote.SPY`,
+  `godxfeed.greeks.<opt>`, `godxfeed.theoprice.<opt>`,
+  `godxfeed.underlying.<sym>`) instead of the Quote-only
+  `godxfeed.<SYMBOL>` scheme. `service.subjectFor` now takes
+  `(event, symbol)` and lowercases the event; `SubscriptionManager` and
+  `FeedEvents` thread it through. `dxclient` widens
+  `FEED_SETUP.AcceptEventFields` to declare Quote + Greeks + TheoPrice
+  + Underlying so runtime `POST /dxlink/subscriptions` with event types
+  other than Quote is accepted by tastytrade. The timescale sink moves
+  its subscription from `godxfeed.*` to `godxfeed.quote.>` (stays
+  quote-only; Greeks/TheoPrice have different payload shapes and belong
+  in their own hypertables when we want them). The analytics sidecar
+  (`tools/analytics/publisher.py`) does the same. The `/stream`
+  endpoint gains an optional `event` query param (defaults to `quote`)
+  and returns the fully-qualified subject. Frontend subscribers:
+  `symbol_detail.js`, `dynamic_distribution.js`, and `line_chart.js`
+  use the new subject directly (the server endpoint is the single
+  source of truth — no more client-side `"godxfeed." +` concatenation,
+  which double-prefixed in `line_chart.js`). `admin.js` still watches
+  `godxfeed.>` for the firehose tail, and `admin_plots.js` classifies
+  by payload shape so it picks up any new event types without a code
+  change. Tests in `service/ingress_test.go` and
+  `service/subscriptions_test.go` updated to the new subject format;
+  `TestFeedEvents_MultipleEventTypes` now asserts that Quote, Greeks,
+  and TheoPrice each fan out onto their own subject. NATS auth-callout
+  ACL is already `godxfeed.>`, so no browser tokens need rotating.
+  Verified end-to-end against the synth mock: POST `/stream?symbol=SPY`
+  returns `godxfeed.quote.SPY`, POST
+  `/stream?symbol=SPY&event=Greeks` returns `godxfeed.greeks.SPY`, and
+  runtime `POST /dxlink/subscriptions` for `(Greeks, TSLA)` dispatches
+  the new subject all the way to the snapshot table. Closes TODO
+  "Phase 3 data model".
+
+### Removed
+- **Dead `cmd/godxfeed/debug.go`.** CHANGELOG already claimed it was
+  deleted (under "Removed: Go dummy NATS publisher") but the file was
+  still on disk — the earlier commit only removed the CLI registration,
+  not the source. File is gone now; `publish_nats` / `symbolFromTopic`
+  had no callers.
+- **BuyMeACoffee webhook + SendGrid email path.** JWT issuance was
+  never actually gated on BMC payments — `POST /token` basic-auth
+  has been the real minting path since the OAuth refactor — so the
+  webhook + email flow was just dead weight. Deleted: the handler
+  (`http/handlers_webhook.go`, ~400 lines of BMC event-shape
+  structs and switch cases), the email helper (`service/email.go`
+  wrapping `sendgrid-go`), the `bmcWebhookAuthorizer` middleware
+  and `getWebhookSecret`/`BMC_WEBHOOK_SECRET` accessor in
+  `http/middleware.go`, the `POST /webhook/buy-me-a-coffee` route
+  in `http/http.go`, the Payment/Subscriptions README section,
+  and the `BMC_WEBHOOK_SECRET` / `SENDGRID_API_KEY` /
+  `SENDGRID_SENDER_EMAIL` entries in `service/.env.dev`.
+  `go mod tidy` drops `sendgrid/sendgrid-go` + `sendgrid/rest`.
+  Token issuance unchanged: `POST /token` (basic-auth gated by
+  `GODXFEED_ADMIN_EMAIL` + `SERVER_SECRET_KEY`) is the sole mint
+  path and `make refresh-auth-token` still works.
+
+### Fixed
+- **Timescale sink no longer logs "skip unparseable message" for
+  analytic posteriors.** The sink subscribed to the `godxfeed.>`
+  firehose and passed every message through `parseQuoteInsert`, which
+  rejected analytics payloads (`{type, symbol, xs, ys, at}`) with
+  "missing eventSymbol" at Debug level — one log line per posterior
+  fit, per symbol, forever. Narrowed the subscription subject to
+  `godxfeed.*` (single-token wildcard) so analytic subjects
+  `godxfeed.analytics.<type>.<symbol>` (two tokens deep) are filtered
+  at the broker, not the sink. Any message that now reaches the sink
+  is a bona-fide quote, so a parse failure is a genuine issue worth
+  the log line. Phase 3 (multi-event-type subjects) will revisit the
+  filter — the sink will subscribe to `godxfeed.quote.>` when that
+  lands. Closes `artifacts/validation-report.html` Finding 4.
+- **dxLink ingress now starts unconditionally.** `cmd/godxfeed/services.go`
+  previously gated `StartIngress` on `len(syms) > 0`, so booting the
+  server without `--symbol` left `SubscriptionManager` nil and every
+  runtime `POST /dxlink/subscriptions` returned `AddSubscription:
+  ingress not started`. The feed channel now opens at boot regardless;
+  `SubscriptionManager.BulkAdd` already short-circuits on an empty pair
+  list, so an empty-boot server just sits on an idle dxLink connection
+  until the admin UI (or an API client) adds a symbol. Closes
+  `artifacts/validation-report.html` Finding 3.
+- **`UpdateSubscription` no longer waits for a FEED_CONFIG that real
+  tastytrade never sends.** Per the dxLink spec, FEED_CONFIG is emitted
+  only in response to FEED_SETUP (and on explicit config changes);
+  FEED_SUBSCRIPTION is fire-and-forget, and the arrival of FEED_DATA
+  for the new symbol is the implicit ack. The old
+  `dxclient.(*client).UpdateSubscription` registered a FEED_CONFIG
+  handler and blocked for 30s, so every runtime POST/DELETE on
+  `/dxlink/subscriptions` timed out against production — even though
+  the wire change had taken effect. `OpenFeed` still awaits a
+  FEED_CONFIG once post-FEED_SETUP, which is correct and unchanged.
+  `SubscriptionManager.Add/Remove` state desync (Finding 2 in the
+  validation report) dissolves as a side effect: with no more spurious
+  timeouts, the rollback path only triggers on genuine `Send` failures
+  where the frame didn't leave. Mocks in `dxclient/feed_test.go` and
+  `tools/synth/src/synth/serve.py` updated to match real tastytrade
+  (no FEED_CONFIG reply on FEED_SUBSCRIPTION) — the too-forgiving mock
+  hid this bug for months. New regression test
+  `TestUpdateSubscription_ReturnsWithoutAck` fails within 500ms if the
+  await ever comes back. Typo fixed in `MessageFeedConfig` docstring
+  (said "after receiving the FEED_CONFIG" — self-referential; meant
+  FEED_SETUP). Verified end-to-end against live tastytrade on
+  SPY/QQQ/AAPL — see `artifacts/validation-report.html` for the
+  failing-then-passing evidence and `LEARNINGS.md` for the
+  "mock-that's-too-forgiving" postmortem.
+
+### Added
+- **Live-market validation (2026-04-20).** First on-market end-to-end
+  run against real tastytrade (SPY / QQQ / AAPL, ~4 min window).
+  Report + raw `http.log` / `analytics.log` / `nats.log` at
+  `artifacts/validation-report.html` and
+  `artifacts/validation-report/`. Three bugs surfaced and tracked in
+  `TODO.md`: (1) `UpdateSubscription` times out waiting for a
+  FEED_CONFIG that real tastytrade only sends in response to
+  FEED_SETUP — the synth mock / feed_test harness spuriously reply to
+  every FEED_SUBSCRIPTION; (2) subscription state rolls back on
+  timeout while the wire change has already taken effect, so
+  `/admin` desyncs; (3) the server refuses dynamic adds if booted
+  without `--symbol`. The happy path (OAuth → handshake → boot-time
+  subs → NATS fan-out → PyMC posterior fits) works cleanly; zero
+  `"NaN"` hits on liquid large-caps; NUTS fits complete in 0.3–0.5s
+  per symbol. See `LEARNINGS.md` for the "mock that's too forgiving"
+  postmortem.
+
 ### Added
 - **Real PyMC posterior in `tools/analytics/`.** Sidecar now fits a
   GBM model (`log-returns ~ Normal(0, σ)`, `σ ~ HalfNormal(0.01)`)

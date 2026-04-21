@@ -70,8 +70,8 @@ func TestSubscriptionManager_AddDispatchesAndRegisters(t *testing.T) {
 	if len(snap) != 1 || snap[0].Symbol != "SPY" || snap[0].Event != "Quote" {
 		t.Errorf("snapshot wrong: %+v", snap)
 	}
-	if snap[0].Subject != "godxfeed.SPY" {
-		t.Errorf("subject = %q, want %q", snap[0].Subject, "godxfeed.SPY")
+	if snap[0].Subject != "godxfeed.quote.SPY" {
+		t.Errorf("subject = %q, want %q", snap[0].Subject, "godxfeed.quote.SPY")
 	}
 }
 

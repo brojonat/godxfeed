@@ -9,9 +9,12 @@ with an OAuth Personal Grant — see
 [How To: Authenticate with tastytrade](#how-to-authenticate-with-tastytrade-one-time-setup).
 
 The server runs one dxLink WebSocket, parses `FEED_DATA` messages, and
-publishes each event to a NATS subject (`godxfeed.<SYMBOL>`). Everything
-downstream — the browser UI, the TimescaleDB writer, any future sidecar — is
-just a NATS subscriber. **NATS is the single source of truth.**
+publishes each event to a NATS subject
+(`godxfeed.<event>.<symbol>`, e.g. `godxfeed.quote.SPY`,
+`godxfeed.greeks.<opt>`, `godxfeed.theoprice.<opt>`,
+`godxfeed.underlying.<sym>`). Everything downstream — the browser UI, the
+TimescaleDB writer, any future sidecar — is just a NATS subscriber.
+**NATS is the single source of truth.**
 
 ## Project Goals
 
@@ -46,14 +49,14 @@ whole shape rather than a single number.
 
 Analytics sidecars (e.g. the upcoming PyMC σ fitter) publish posterior
 densities on `godxfeed.analytics.<type>.<symbol>` — a sibling of the
-`godxfeed.<SYMBOL>` quote stream — and the frontend renders them as
+`godxfeed.quote.<symbol>` quote stream — and the frontend renders them as
 first-class overlays alongside the empirical histogram. Because NATS is
 the single source of truth, sidecars don't touch the Go server: they
 subscribe to quotes, fit a model, publish a density, and the `/admin`
 panels pick it up automatically.
 
 The first such sidecar lives at [`tools/analytics/`](./tools/analytics/)
-— a Python/FastAPI service that subscribes to `godxfeed.*`, buffers
+— a Python/FastAPI service that subscribes to `godxfeed.quote.>`, buffers
 the last ~60s of mids per symbol, and every `ANALYTICS_INTERVAL_S`
 fits `log-returns ~ Normal(0, σ)` with PyMC NUTS on the trailing 30s.
 It then publishes the posterior-*predictive* density over the next
@@ -166,7 +169,7 @@ by design.
 **2. Client NATS subscriptions** — whatever a NATS client (browser,
 sidecar, anything) has subscribed to on the subject tree. Completely
 independent of any service instance's dxLink state. A client
-subscribed to `godxfeed.SPY` receives data regardless of which shard
+subscribed to `godxfeed.quote.SPY` receives data regardless of which shard
 is publishing it, and also picks up publishes on
 `godxfeed.analytics.<type>.<symbol>` from analytics workers that
 aren't godxfeed service instances at all. This layer is the client's
@@ -333,7 +336,11 @@ user that can subscribe (but not publish) to `godxfeed.>`.
 import { connect, tokenAuthenticator, StringCodec } from "nats.ws";
 
 const nc = await connect({ servers: [NATS_URL], authenticator: tokenAuthenticator(jwt) });
-const sub = nc.subscribe("godxfeed.SPY");   // or "godxfeed.>" for the firehose
+const sub = nc.subscribe("godxfeed.quote.SPY");   // or "godxfeed.>" for the firehose
+// multi-symbol by event type:
+//   nc.subscribe("godxfeed.quote.>")       → all quotes
+//   nc.subscribe("godxfeed.greeks.>")      → all Greeks
+//   nc.subscribe("godxfeed.*.SPY")         → every event type for one symbol
 const decoder = new StringCodec();
 for await (const m of sub) {
   const event = JSON.parse(decoder.decode(m.data));
@@ -365,18 +372,6 @@ All bearer-gated:
 - `GET /ping` → sanity check
 - `GET /streamer-token` → fetches a fresh dxFeed streamer token via the
   service's OAuth flow (useful for debugging)
-
-## Payment/Subscriptions
-
-The web UI bearer JWT is issued in response to [BuyMeACoffee](https://buymeacoffee.com)
-payments. The webhook handler at `POST /webhook/buy-me-a-coffee`:
-
-1. Validates the BMC signature.
-2. Issues a JWT whose TTL scales with the payment amount
-   (1 coffee = 30 days, 3 = 90 days, 5+ = 180 days).
-3. Emails the JWT to the payer via SendGrid.
-
-JWTs are single-use per transaction; no resend / refresh / extend path.
 
 ## Deployment
 

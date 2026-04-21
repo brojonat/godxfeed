@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	dx "github.com/brojonat/godxfeed/dxclient"
 )
 
 // FeedEvent is one event ready to publish: the NATS subject (derived from the
-// event's symbol) and the raw JSON payload. The Event / Symbol fields are a
-// convenience for counter bookkeeping — callers that only publish can ignore
-// them.
+// event's type and symbol) and the raw JSON payload. The Event / Symbol
+// fields are a convenience for counter bookkeeping — callers that only
+// publish can ignore them.
 //
 // Payload is a slice into the caller's buffer after NaN sanitization; it is
 // safe to publish immediately but must be copied before being retained past
@@ -23,11 +24,12 @@ type FeedEvent struct {
 	Symbol  string
 }
 
-// subjectFor returns the NATS subject for a given event symbol. Kept as a
-// single choke-point so Phase 3 can flip to `godxfeed.<event>.<symbol>` (or
-// whatever) without hunting for string formatting across the codebase.
-func subjectFor(symbol string) string {
-	return "godxfeed." + symbol
+// subjectFor returns the NATS subject for an (event, symbol) pair. The scheme
+// is `godxfeed.<event>.<symbol>` with the event type lowercased. Consumers
+// that want a specific event type subscribe to `godxfeed.<event>.>`; the
+// legacy single-token `godxfeed.*` pattern no longer matches anything.
+func subjectFor(event, symbol string) string {
+	return "godxfeed." + strings.ToLower(event) + "." + symbol
 }
 
 // FeedEvents converts a dxLink message into zero or more FeedEvents ready for
@@ -77,7 +79,7 @@ func parseFeedData(data json.RawMessage) ([]FeedEvent, error) {
 			continue
 		}
 		out = append(out, FeedEvent{
-			Subject: subjectFor(hdr.EventSymbol),
+			Subject: subjectFor(hdr.EventType, hdr.EventSymbol),
 			Payload: raw,
 			Event:   hdr.EventType,
 			Symbol:  hdr.EventSymbol,

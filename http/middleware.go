@@ -1,18 +1,12 @@
 package http
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
-
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 
 	"github.com/brojonat/godxfeed/http/api"
 	"github.com/brojonat/godxfeed/service"
@@ -27,10 +21,6 @@ var ctxKeyEmail contextKey = 2
 
 func getSecretKey() string {
 	return os.Getenv("SERVER_SECRET_KEY")
-}
-
-func getWebhookSecret() string {
-	return os.Getenv("BMC_WEBHOOK_SECRET")
 }
 
 type authJWTClaims struct {
@@ -197,48 +187,3 @@ func setContentType(content string) handlerAdapter {
 	}
 }
 
-// bmcWebhookAuthorizer creates middleware to verify Buy Me a Coffee webhook signatures
-func bmcWebhookAuthorizer(s service.Service, getSecret func() string) handlerAdapter {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			// Get the signature from the X-BMC-Signature header
-			signature := r.Header.Get("x-signature-sha256")
-			if signature == "" {
-				writeBadRequestError(w, fmt.Errorf("missing X-BMC-Signature header"))
-				return
-			}
-
-			// Read the raw body
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				writeInternalError(s, w, fmt.Errorf("failed to read request body: %w", err))
-				return
-			}
-
-			// Important: Restore the body for subsequent reads
-			r.Body = io.NopCloser(bytes.NewBuffer(body))
-
-			// Get the webhook secret
-			secret := getSecret()
-			if secret == "" {
-				writeInternalError(s, w, fmt.Errorf("webhook secret not configured"))
-				return
-			}
-
-			// Calculate expected signature
-			// BMC uses HMAC-SHA256 for webhook signatures
-			mac := hmac.New(sha256.New, []byte(secret))
-			mac.Write(body)
-			expectedSignature := hex.EncodeToString(mac.Sum(nil))
-
-			// Compare signatures using a constant-time comparison
-			if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
-				writeBadRequestError(w, fmt.Errorf("invalid webhook signature"))
-				return
-			}
-
-			// Signature is valid, proceed to handler
-			next(w, r)
-		}
-	}
-}

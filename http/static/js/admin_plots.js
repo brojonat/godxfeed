@@ -1,7 +1,9 @@
 // Per-symbol live distribution plots with optional analytic overlays.
 //
 // Pipeline:
-//   NATS godxfeed.> subscription
+//   NATS godxfeed.> subscription  (multi-token wildcard: catches
+//     godxfeed.quote.<SYMBOL>, godxfeed.greeks.<SYMBOL>,
+//     godxfeed.analytics.<type>.<SYMBOL>, …)
 //     → Observable<decoded JSON>
 //     → map: discriminate Quote vs analytic (posterior, ...)
 //     → filter: drop unknown shapes (the null path collapses here so
@@ -10,7 +12,7 @@
 //     → renderPanel(symbol, state)
 //
 // Wire contracts:
-//   Quote  (subject: godxfeed.<SYMBOL>):
+//   Quote  (subject: godxfeed.quote.<SYMBOL>):
 //     { eventType: "Quote", eventSymbol, bidPrice, ... }
 //
 //   Analytic overlay (subject: godxfeed.analytics.<type>.<SYMBOL>):
@@ -19,9 +21,11 @@
 //     expected counts per bin (density · N · dx of the observed
 //     histogram) so a well-fit posterior traces the tops of the bars.
 //
-// Adding a new analytic type = one branch in the classifier map + one
-// render branch in `update`. No new subscription, no server change:
-// sidecars publish directly to NATS.
+// The discriminator is payload shape, not subject, so new event types
+// (Greeks, TheoPrice, …) flow through without touching this file. Adding
+// a new analytic type = one branch in the classifier map + one render
+// branch in `update`. No new subscription, no server change: sidecars
+// publish directly to NATS.
 
 import {
   Observable,

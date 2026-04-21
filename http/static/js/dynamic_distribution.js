@@ -46,8 +46,10 @@ async function runDynamicDistribution() {
     const streamData = await response.json();
     const streamSubject = streamData.subject;
 
-    // Subscribe to the specific subject for this symbol
-    const sub = nc.subscribe("godxfeed.SPY");
+    // Subscribe to the specific subject for this symbol. The /stream
+    // endpoint returns the full subject under the Phase 3 scheme
+    // `godxfeed.<event>.<symbol>` — use it as-is rather than rebuilding.
+    const sub = nc.subscribe(streamSubject);
     const decoder = new StringCodec();
 
     // Process incoming messages. Each NATS message is a single dxlink Quote

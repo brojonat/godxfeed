@@ -553,7 +553,9 @@ async function runLineChart() {
 
   // Subscribe to the stream
   try {
-    const sub = nc.subscribe(`godxfeed.${streamSubject}`);
+    // `streamSubject` is the fully-qualified NATS subject under the Phase 3
+    // scheme `godxfeed.<event>.<symbol>` — no re-prefixing needed.
+    const sub = nc.subscribe(streamSubject);
     const decoder = new StringCodec();
     for await (const msg of sub) {
       const data = JSON.parse(decoder.decode(msg.data));

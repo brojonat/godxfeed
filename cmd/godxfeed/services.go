@@ -150,12 +150,11 @@ func serve_http(ctx *cli.Context) error {
 			}(sink)
 		}
 
-		// Start the dxLink → NATS ingress. If no symbols were configured,
-		// skip — StartIngress assumes at least one.
-		if len(syms) > 0 {
-			if err := tts.StartIngress(ctx.Context, syms); err != nil {
-				log.Error("failed to start ingress", "err", err)
-			}
+		// Start the dxLink → NATS ingress unconditionally. An empty symbol
+		// set is legal — the feed channel is opened anyway so runtime
+		// POST /dxlink/subscriptions adds work against a live client.
+		if err := tts.StartIngress(ctx.Context, syms); err != nil {
+			log.Error("failed to start ingress", "err", err)
 		}
 	}
 

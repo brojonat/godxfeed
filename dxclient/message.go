@@ -216,13 +216,16 @@ func (m MessageFeedTimeSeriesSubscription) JSON() ([]byte, error) {
 }
 
 // The server can send this message to the client after receiving the
-// `FEED_CONFIG` message.
+// `FEED_SETUP` message.
 //
 // The server can send this message to the client if the `FEED` service
 // configuration has changed.
 //
 // Parameters are lazy therefore the server may not send the notification
 // immediately, but before the first `FEED_DATA` is sent.
+//
+// Note: FEED_CONFIG is NOT emitted in response to FEED_SUBSCRIPTION.
+// Incremental symbol add/remove is fire-and-forget on the wire.
 type MessageFeedConfig struct {
 	MessageBase
 	AggregationPeriod float64         `json:"aggregationPeriod"`

@@ -42,10 +42,10 @@ func TestFeedEvents_ExtractsOnePerEvent(t *testing.T) {
 		t.Fatalf("len = %d, want 2", len(got))
 	}
 
-	if got[0].Symbol != "SPY" || got[0].Subject != "godxfeed.SPY" || got[0].Event != "Quote" {
+	if got[0].Symbol != "SPY" || got[0].Subject != "godxfeed.quote.SPY" || got[0].Event != "Quote" {
 		t.Errorf("event[0] = %+v", got[0])
 	}
-	if got[1].Symbol != "AAPL" || got[1].Subject != "godxfeed.AAPL" {
+	if got[1].Symbol != "AAPL" || got[1].Subject != "godxfeed.quote.AAPL" {
 		t.Errorf("event[1] = %+v", got[1])
 	}
 
@@ -129,15 +129,15 @@ func TestFeedEvents_MalformedJSONIsError(t *testing.T) {
 }
 
 func TestFeedEvents_MultipleEventTypes(t *testing.T) {
-	// Simulates what Phase 3 will look like: a mixed batch with Quote +
-	// Greeks + TheoPrice. Parser should emit all of them; current subject
-	// scheme collapses them onto `godxfeed.<symbol>` — downstream consumers
-	// will discriminate by eventType field inside the payload.
+	// Phase 3: each event type gets its own subject slot. A mixed batch of
+	// Quote + Greeks + TheoPrice fans out onto three distinct subjects
+	// under `godxfeed.<event>.<symbol>` — downstream consumers discriminate
+	// by the subject token rather than re-parsing the payload.
 	fd := dx.MessageFeedData{
 		Data: []byte(`[
 			{"eventType":"Quote","eventSymbol":"SPY","bidPrice":580,"askPrice":580.05},
-			{"eventType":"Greeks","eventSymbol":".SPY260321C500","delta":0.62,"gamma":0.01},
-			{"eventType":"TheoPrice","eventSymbol":".SPY260321C500","price":81.2}
+			{"eventType":"Greeks","eventSymbol":"SPY_OPT","delta":0.62,"gamma":0.01},
+			{"eventType":"TheoPrice","eventSymbol":"SPY_OPT","price":81.2}
 		]`),
 	}
 	got, err := FeedEvents(fd)
@@ -147,10 +147,16 @@ func TestFeedEvents_MultipleEventTypes(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("len = %d, want 3", len(got))
 	}
-	wantEvents := []string{"Quote", "Greeks", "TheoPrice"}
-	for i, w := range wantEvents {
-		if got[i].Event != w {
-			t.Errorf("event[%d].Event = %q, want %q", i, got[i].Event, w)
+	want := []struct {
+		event, symbol, subject string
+	}{
+		{"Quote", "SPY", "godxfeed.quote.SPY"},
+		{"Greeks", "SPY_OPT", "godxfeed.greeks.SPY_OPT"},
+		{"TheoPrice", "SPY_OPT", "godxfeed.theoprice.SPY_OPT"},
+	}
+	for i, w := range want {
+		if got[i].Event != w.event || got[i].Symbol != w.symbol || got[i].Subject != w.subject {
+			t.Errorf("event[%d] = %+v, want (%s, %s, %s)", i, got[i], w.event, w.symbol, w.subject)
 		}
 	}
 }

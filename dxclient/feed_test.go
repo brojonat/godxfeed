@@ -18,8 +18,11 @@ import (
 
 // fakeServer is a minimal dxlink-protocol stub: it replies to SETUP/AUTH to
 // let the client connect, records every inbound message, and sends canned
-// CHANNEL_OPENED + FEED_CONFIG responses so OpenFeed/UpdateSubscription can
-// make progress without a real dxFeed endpoint.
+// CHANNEL_OPENED + FEED_CONFIG responses so OpenFeed can complete its
+// FEED_SETUP handshake. FEED_SUBSCRIPTION is fire-and-forget per the dxLink
+// spec — this harness mirrors that and deliberately does NOT ack
+// FEED_SUBSCRIPTION with a FEED_CONFIG (an earlier version did, which masked
+// a 30s timeout bug against real tastytrade; see `LEARNINGS.md`).
 type fakeServer struct {
 	srv *httptest.Server
 	mu  sync.Mutex
@@ -96,13 +99,8 @@ func newFakeServer(t *testing.T) *fakeServer {
 				})
 				conn.WriteMessage(websocket.TextMessage, reply)
 			case dxclient.MESSAGE_TYPE_FEED_SUBSCRIPTION:
-				// Server reply after a subscription change is a FEED_CONFIG
-				// confirmation per the dxlink protocol.
-				reply, _ := json.Marshal(dxclient.MessageFeedConfig{
-					MessageBase: dxclient.MessageBase{Type: dxclient.MESSAGE_TYPE_FEED_CONFIG, Channel: base.Channel},
-					DataFormat:  dxclient.FEED_DATA_FORMAT_FULL,
-				})
-				conn.WriteMessage(websocket.TextMessage, reply)
+				// No reply. Real tastytrade treats FEED_SUBSCRIPTION as
+				// fire-and-forget; FEED_DATA arrival is the only ack.
 			}
 		}
 	}))
@@ -223,6 +221,9 @@ func TestUpdateSubscription_AddsSentOnFeedChannel(t *testing.T) {
 		t.Fatalf("UpdateSubscription: %v", err)
 	}
 
+	// UpdateSubscription is fire-and-forget now; poll for the frame
+	// to reach the server before assertions.
+	fs.waitFor(t, dxclient.MESSAGE_TYPE_FEED_SUBSCRIPTION)
 	subs := fs.allOfType(dxclient.MESSAGE_TYPE_FEED_SUBSCRIPTION)
 	if len(subs) != 1 {
 		t.Fatalf("want exactly 1 FEED_SUBSCRIPTION, got %d", len(subs))
@@ -268,6 +269,14 @@ func TestUpdateSubscription_RemovesSentOnFeedChannel(t *testing.T) {
 		t.Fatalf("UpdateSubscription remove: %v", err)
 	}
 
+	// Wait for both frames to be recorded by the server.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(fs.allOfType(dxclient.MESSAGE_TYPE_FEED_SUBSCRIPTION)) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	subs := fs.allOfType(dxclient.MESSAGE_TYPE_FEED_SUBSCRIPTION)
 	if len(subs) != 2 {
 		t.Fatalf("want 2 FEED_SUBSCRIPTION msgs (add then remove), got %d", len(subs))
@@ -306,6 +315,14 @@ func TestUpdateSubscription_ReusesSameChannelAcrossCalls(t *testing.T) {
 	if len(chReqs) != 1 {
 		t.Fatalf("want exactly 1 CHANNEL_REQUEST across lifecycle, got %d", len(chReqs))
 	}
+	// Wait for all 3 FEED_SUBSCRIPTION frames to reach the server.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(fs.allOfType(dxclient.MESSAGE_TYPE_FEED_SUBSCRIPTION)) >= 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	subs := fs.allOfType(dxclient.MESSAGE_TYPE_FEED_SUBSCRIPTION)
 	if len(subs) != 3 {
 		t.Fatalf("want 3 FEED_SUBSCRIPTION msgs, got %d", len(subs))
@@ -336,6 +353,36 @@ func TestUpdateSubscription_BeforeOpenFeedErrors(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if subs := fs.allOfType(dxclient.MESSAGE_TYPE_FEED_SUBSCRIPTION); len(subs) != 0 {
 		t.Errorf("no FEED_SUBSCRIPTION should have been sent, got %d", len(subs))
+	}
+}
+
+// TestUpdateSubscription_ReturnsWithoutAck pins down the wire-protocol
+// invariant we learned on 2026-04-20: real tastytrade does not emit any
+// ack (FEED_CONFIG or otherwise) in response to FEED_SUBSCRIPTION, so
+// UpdateSubscription must return as soon as the frame is written — not
+// block waiting for a reply. Regression guard: before the fix this call
+// blocked for 30s against a mock that (correctly) ignored the frame.
+func TestUpdateSubscription_ReturnsWithoutAck(t *testing.T) {
+	fs := newFakeServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := newDialedClient(t, ctx, fs)
+
+	if err := c.OpenFeed(); err != nil {
+		t.Fatalf("OpenFeed: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.UpdateSubscription([]dxclient.FeedSub{{Event: "Quote", Symbol: "SPY"}}, nil)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("UpdateSubscription: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("UpdateSubscription did not return within 500ms — it is waiting for an ack that never comes")
 	}
 }
 

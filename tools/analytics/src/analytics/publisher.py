@@ -1,9 +1,9 @@
 """Periodic PyMC posterior publisher.
 
-Subscribes to ``godxfeed.*`` (quote subjects), buffers the last ~60s of
-mid prices per symbol, and every ``interval_s`` fits a PyMC model on
-the last 30s of ticks. The posterior-predictive density over the next
-mid is published to::
+Subscribes to ``godxfeed.quote.>`` (quote firehose), buffers the last
+~60s of mid prices per symbol, and every ``interval_s`` fits a PyMC
+model on the last 30s of ticks. The posterior-predictive density over
+the next mid is published to::
 
     godxfeed.analytics.posterior.<SYMBOL>
 
@@ -148,13 +148,13 @@ async def ingest_quotes(
 ) -> None:
     """Own the NATS subscription until ``stop_event`` is set.
 
-    The ``godxfeed.*`` wildcard only matches single-token suffixes, so
-    this picks up ``godxfeed.<SYMBOL>`` quote subjects and naturally
-    skips ``godxfeed.analytics.posterior.<SYMBOL>`` (four tokens) —
-    no self-feedback.
+    Phase 3 subject scheme: ``godxfeed.<event>.<symbol>``. Subscribing
+    to ``godxfeed.quote.>`` restricts us to quote events without pulling
+    in analytics (``godxfeed.analytics.…``) or other event types we
+    don't yet model, so there's no risk of self-feedback.
     """
-    sub = await nc.subscribe("godxfeed.*")
-    log.info("ingest: subscribed to godxfeed.*")
+    sub = await nc.subscribe("godxfeed.quote.>")
+    log.info("ingest: subscribed to godxfeed.quote.>")
     try:
         async for msg in sub.messages:
             if stop_event.is_set():

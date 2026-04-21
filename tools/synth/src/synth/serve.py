@@ -228,11 +228,12 @@ async def handle_client(ws: WebSocket, db_path: str, speed: float) -> None:
                     session.subscribed.add((add["type"], add["symbol"]))
                 for rem in rems:
                     session.subscribed.discard((rem["type"], rem["symbol"]))
-                # Ack first — the Go client waits for FEED_CONFIG before
-                # UpdateSubscription returns, and playback can start
-                # asynchronously afterwards.
-                await send(session, _empty_feed_config(channel))
-                log.info("FEED_CONFIG ack sent for channel %d", channel)
+                # No FEED_CONFIG ack — real tastytrade treats FEED_SUBSCRIPTION
+                # as fire-and-forget, and an earlier version of this mock sent
+                # one anyway, which hid a 30s-timeout bug in the Go client for
+                # months. Playback starts unconditionally on the first
+                # subscription so the first FEED_DATA frame is the only
+                # implicit ack the client gets (same as real tastytrade).
                 if (
                     session.feed_channel is not None
                     and (

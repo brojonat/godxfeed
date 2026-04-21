@@ -97,6 +97,52 @@ while already holding the lock. `getNextChanIDLocked()` in
 test timing out *before any wire traffic*, check for same-goroutine
 re-locks before anything else.
 
+## Real tastytrade does not emit FEED_CONFIG in response to FEED_SUBSCRIPTION — only FEED_SETUP
+
+**What:** `UpdateSubscription` in `dxclient/client.go` sends a FEED_SUBSCRIPTION
+frame and calls `awaitFeedConfig`, which blocks for 30s waiting for a
+`MessageFeedConfig` ack. Against real tastytrade
+(`wss://tasty-openapi-ws.dxfeed.com/realtime`), this ack never arrives —
+every runtime `/dxlink/subscriptions` POST/DELETE times out. The wire
+change *did* take effect (new symbols start streaming FEED_DATA, deletes
+stop their flow), but the Go bookkeeping rolls back on error, producing a
+total desync between `/admin` state and what's actually on the wire.
+
+**Why surprising:** `tools/synth/serve.py` and the in-test harness
+`dxclient/feed_test.go:99` both reply with FEED_CONFIG on every
+FEED_SUBSCRIPTION. Every test and every off-market dev run happened to
+satisfy the client. First contact with production was also first time
+this ever failed.
+
+**Fix direction:** FEED_SUBSCRIPTION is fire-and-forget per the dxLink
+protocol — the arrival of FEED_DATA for the new symbol is the only
+implicit ack. Drop `awaitFeedConfig` from `UpdateSubscription`; keep it
+on `OpenFeed` (which legitimately receives FEED_CONFIG after FEED_SETUP).
+Update the synth mock and feed_test harness to match real protocol, or
+they'll keep hiding this class of bug. See
+`artifacts/validation-report.html` (2026-04-20) for the live-market
+evidence.
+
+## Mock that's too forgiving is worse than no mock
+
+**What:** The synth mock responded to every FEED_SUBSCRIPTION with a
+FEED_CONFIG (because the client demanded one), so every integration test
+against synth passed. Deployed to real tastytrade, every incremental
+add/remove broke — the protocol mismatch had been invisible for months.
+
+**Why surprising:** You'd think a mock that accepts what the client sends
+is "correct enough." In reality, a mock that humours a broken client
+teaches the client its own bugs are features. The mock has to push back
+where the real server would push back.
+
+**Fix:** When writing a protocol mock, start from the real server's
+behavior (capture a session, read the spec), not from "what the client
+expects." If the client times out against the real server, the mock's
+job is to reproduce that timeout until the client is fixed — then the
+test passes because the client is correct, not because the mock was
+lenient. Every off-market validation run now has a matching on-market
+sanity pass in `artifacts/validation-report.html`.
+
 ## The existing `dxclient.Client.Subscribe` couldn't be tested against the repo's own mock
 
 **What:** Writing Phase-2 TDD tests, I went to extend the existing
@@ -133,6 +179,49 @@ running on the side, you chase a ghost.
 discover its own port. Logged in TODO as "pre-existing teardown leak /
 keepalive panic."
 
+
+## dxLink `AcceptEventFields` is strictly a COMPACT-mode knob
+
+**What:** Phase 3 widens `dxclient.client.OpenFeed`'s `FEED_SETUP.AcceptEventFields`
+from `{Quote: [...]}` to also declare Greeks, TheoPrice, and Underlying.
+In FULL data mode — which is what we use — the server actually sends every
+field it has for each event type regardless of this map; the listed fields
+don't gate the wire payload.
+
+**Why surprising:** The name suggests the client is opting in to specific
+fields. In reality it only matters for COMPACT mode, where the server
+renders each event as a positional array and needs to know the column order
+up front. In FULL mode each event is a self-describing object so the map
+is effectively documentation.
+
+**Fix:** Still list the event types we care about so the semantics stay
+legible (a reader can see at a glance which streams the client wants), and
+so a later switch to COMPACT doesn't silently regress. A later
+`FEED_SUBSCRIPTION` with `type: "Greeks"` doesn't require the server to
+have seen "Greeks" in AcceptEventFields, but keeping the listing correct
+makes the code match the contract we'd need under COMPACT.
+
+## NATS subject tokens can't start with a dot — matters for option streamer symbols
+
+**What:** Phase 3's subject scheme is `godxfeed.<event>.<symbol>`. Option
+streamer symbols from dxFeed typically start with a `.` (e.g.
+`.SPY260321C500`). Concatenating yields `godxfeed.greeks..SPY260321C500`
+— two tokens `greeks` and `` (empty), then `SPY260321C500`. NATS rejects
+subjects with empty tokens ("foo..bar"), so publishing would fail.
+
+**Why surprising:** The same hazard existed silently under the
+single-token scheme (`godxfeed..SPY260321C500`) but was never exposed
+because options aren't yet wired through end-to-end — equity symbols
+like `SPY` / `AAPL` don't contain dots, so every test and every live
+validation run happened to produce a valid subject.
+
+**Fix direction (deferred):** When the options grid lands, the ingress
+will need to munge option symbols before subject construction — either
+strip the leading dot, replace all dots with an underscore, or
+percent-encode. The choice has to be reversible if any consumer wants
+to round-trip from subject to symbol; stripping the leading dot is
+irreversible but simple. Decide when the first option-quote path is
+wired up.
 
 ## tastytrade session auth is dead (since 2024-12-01)
 

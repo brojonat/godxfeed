@@ -199,14 +199,6 @@ func RunHTTPServer(
 		handleAdmin(tts, natsBrowserURL),
 	))
 
-	// webhook handlers
-	mux.Handle("POST /webhook/buy-me-a-coffee", adaptHandler(
-		handleBMCWebhook(tts),
-		apiMode(tts, maxBytes, headers, methods, origins),
-		bmcWebhookAuthorizer(tts, getWebhookSecret),
-	))
-
-	// Add this near the other route handlers in RunHTTPServer
 	mux.Handle("GET /", adaptHandler(
 		handleIndex(),
 	))

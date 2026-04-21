@@ -6,7 +6,7 @@
 //      overlays published to `godxfeed.analytics.<type>.<SYMBOL>`.
 //
 // Subjects subscribed:
-//   godxfeed.<SYMBOL>              → Quote events (raw dxFeed JSON)
+//   godxfeed.quote.<SYMBOL>        → Quote events (raw dxFeed JSON)
 //   godxfeed.analytics.*.<SYMBOL>  → {type, symbol, xs, ys, at}
 //
 // Both subscriptions are feature-independent: if no analytics sidecar
@@ -312,7 +312,7 @@ async function runSymbolDetail() {
   const tsPanel   = createTimeSeriesPanel(document.getElementById("timeseries-panel"));
   const distPanel = createDistPanel(document.getElementById("dist-panel"), SYMBOL);
 
-  const quoteSubject    = `godxfeed.${SYMBOL}`;
+  const quoteSubject    = `godxfeed.quote.${SYMBOL}`;
   const overlaySubject  = `godxfeed.analytics.*.${SYMBOL}`;
 
   // Shared state — one rolling buffer per panel's needs.
