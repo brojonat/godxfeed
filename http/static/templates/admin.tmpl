@@ -22,6 +22,31 @@
   </header>
 
   <section>
+    <h2>Natural-language subscribe <span class="muted">(LLM → FilterSpec → subs)</span></h2>
+    <form id="nl-form" class="nl-form" autocomplete="off">
+      <textarea id="nl-text" name="nl-text" rows="2"
+        placeholder='e.g. "subscribe to SPY calls between 250 and 270 expiring in March"'></textarea>
+      <div class="nl-row">
+        <button type="button" id="nl-mic" title="Voice input (Web Speech API)">Voice</button>
+        <label class="muted">provider:
+          <select id="nl-provider" name="nl-provider">
+            <option value="">default</option>
+            <option value="anthropic">anthropic</option>
+            <option value="openai">openai</option>
+            <option value="gemini">gemini</option>
+          </select>
+        </label>
+        <button type="submit">Subscribe</button>
+        <span id="nl-status" class="muted"></span>
+      </div>
+    </form>
+    <div id="nl-result" class="nl-result" hidden>
+      <div id="nl-filter-echo"></div>
+      <div id="nl-subs-list"></div>
+    </div>
+  </section>
+
+  <section>
     <h2>Subscriptions</h2>
     <form id="add-sub-form" class="sub-form" autocomplete="off">
       <label>Event

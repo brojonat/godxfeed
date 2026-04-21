@@ -205,6 +205,59 @@ structured selections over a known dataset, ask: *could this be
 `llm(dataset + prompt)`?* Usually yes, and the non-LLM half is
 where all the testing leverage lives.
 
+## Gemini's `responseSchema` dialect strips several JSON Schema keywords
+
+**What:** First live smoke test of the Gemini provider (Anthropic +
+OpenAI passed green immediately) failed twice with HTTP 400. Both
+were schema-dialect issues not in the Google docs I'd read:
+
+1. `additionalProperties` is rejected at every depth. Error text:
+   `"Unknown name \"additionalProperties\" at
+   'generation_config.response_schema.properties[1].value'"` — the
+   reference to `properties[1]` was red-herring (Gemini enumerates
+   map properties as a list internally) but the fix was just to
+   strip the keyword recursively.
+
+2. Empty-string `enum` members are rejected. Error text:
+   `"properties[kind].enum[3]: cannot be empty"`. The shared schema
+   uses `""` on `kind` to mean "equity-only" (i.e. no options);
+   Gemini treats `""` as an invalid value in a string-enum list.
+
+**Why surprising:** "Structured output" feels commoditized at a
+distance, but each provider's schema parser has opinions that only
+surface when you actually POST to it. Docs describe what's
+supported, not what's *rejected*.
+
+**Fix direction:** Smoke-test against real APIs before shipping
+provider code. The unit tests against `httptest.NewServer` happily
+accept any JSON we send — they verify shape, not semantics. Once
+the schema parser on the other end weighs in, real bugs show up.
+`normalizeForGemini` now strips both constructs recursively; if a
+future Gemini version adds more quirks, that same function is the
+right place to land them.
+
+## Web Speech API: supported ≠ deployed everywhere
+
+**What:** Wiring the admin textbox's voice input, I reached for
+`SpeechRecognition` (via `window.SpeechRecognition ||
+window.webkitSpeechRecognition`). Chrome/Edge have it. Firefox
+exposes `SpeechRecognition` but returns `service-not-allowed` on
+`start()` in most configurations. Safari has it behind a flag or
+not at all depending on version.
+
+**Why surprising:** MDN's compat table makes the API look broadly
+available — "supported" in most modern browsers. In practice,
+outside Chromium the implementation is either missing or routes to
+a server that most users can't reach.
+
+**Fix direction:** Feature-detect *and* handle `onerror` cleanly,
+but don't bother polyfilling. The UI disables the mic button and
+shows a tooltip ("try Chrome/Edge") when the API is absent; runtime
+errors like `no-speech` and `aborted` are treated as normal
+user-driven stops rather than scary alerts. If broader browser
+support ever matters, the fallback is server-side STT (Whisper, et
+al.) — not a polyfill.
+
 ## Each major LLM provider has a different way to force JSON output
 
 **What:** Building provider-agnostic `llm.Provider` implementations

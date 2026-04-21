@@ -122,12 +122,15 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
 
 ## Follow-ups on LLM subscription interface
 
-- [ ] `/nl-subscribe` admin UI — single text box on `/admin` that POSTs
-      to the endpoint and renders the echo'd FilterSpec + resolved
-      subs for confirmation before (or after) dispatch. Back-end is
-      done; this is pure frontend.
-- [ ] Voice input wrapper — Web Speech API → `/nl-subscribe`. Zero
-      server change required.
+- [x] `/nl-subscribe` admin UI — done 2026-04-20. Textarea + provider
+      dropdown on `/admin` posts to the endpoint and renders the
+      echo'd `FilterSpec` + resolved subs. The subs table refreshes
+      immediately after dispatch via a `nl-subscribe:applied` event.
+- [x] Voice input wrapper — done 2026-04-20. Web Speech API wired
+      into the admin textarea with live interim results. Feature-
+      detected with a clean unsupported-browser fallback (disabled
+      button + tooltip). Errors `no-speech`/`aborted` treated as
+      normal user stops.
 - [ ] Prompt-eval loop — golden cases (e.g. "next Friday's SPY calls"
       against a fixed date) to catch drift between provider upgrades.
 - [ ] Option streamer symbols start with `.` — once options flow

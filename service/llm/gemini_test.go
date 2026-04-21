@@ -170,6 +170,51 @@ func TestGeminiProvider_NonOKStatusErrors(t *testing.T) {
 	}
 }
 
+func TestGeminiSchema_StripsEmptyStringEnumMembers(t *testing.T) {
+	// Gemini rejects "" as an enum value with HTTP 400. The shared
+	// schema uses "" on `kind` to mean equity-only; adapter strips
+	// the empty value but leaves "call"/"put"/"both" so the model is
+	// still nudged toward the expected vocabulary.
+	s, err := geminiSchema()
+	if err != nil {
+		t.Fatalf("geminiSchema: %v", err)
+	}
+	props, _ := s["properties"].(map[string]any)
+	kind, _ := props["kind"].(map[string]any)
+	enum, _ := kind["enum"].([]any)
+	if len(enum) == 0 {
+		t.Fatalf("kind.enum was stripped to empty; should retain non-empty values")
+	}
+	for _, v := range enum {
+		if s, _ := v.(string); s == "" {
+			t.Errorf("kind.enum still contains empty string: %v", enum)
+		}
+	}
+}
+
+func TestGeminiSchema_StripsAdditionalProperties(t *testing.T) {
+	// Gemini rejects additionalProperties with a 400 at every depth.
+	// Adapter must strip it from the top level and from every nested
+	// object schema.
+	s, err := geminiSchema()
+	if err != nil {
+		t.Fatalf("geminiSchema: %v", err)
+	}
+	if _, present := s["additionalProperties"]; present {
+		t.Error("top-level additionalProperties should be stripped")
+	}
+	props, _ := s["properties"].(map[string]any)
+	for _, name := range []string{"expiry_window", "strike_window"} {
+		sub, _ := props[name].(map[string]any)
+		if sub == nil {
+			t.Fatalf("%s missing", name)
+		}
+		if _, present := sub["additionalProperties"]; present {
+			t.Errorf("%s.additionalProperties should be stripped", name)
+		}
+	}
+}
+
 func TestGeminiSchema_NormalizesNullableUnions(t *testing.T) {
 	// Unit test for the adapter directly — both nullable sub-schemas
 	// (expiry_window, strike_window) should be translated.

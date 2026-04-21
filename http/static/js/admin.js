@@ -7,6 +7,7 @@ import { ensureValidToken, authenticatedFetch } from "./auth.js";
 import { AUTH_CONFIG } from "./config.js";
 import { showLoginModal } from "./modal.js";
 import { natsToObservable, startSymbolPlots } from "./admin_plots.js";
+import { wireNLSubscribe } from "./nl_subscribe.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Poll loop for status + subscriptions tables. Every second we re-fetch
@@ -197,7 +198,12 @@ function wireTailControls() {
 async function runAdmin() {
   wireTailControls();
   wireSubscriptionControls();
+  wireNLSubscribe();
   const token = await ensureValidToken();
+
+  // /nl-subscribe fires this after a successful dispatch so the subs
+  // table re-renders immediately rather than waiting for the 1s tick.
+  window.addEventListener("nl-subscribe:applied", () => { pollSubscriptions(); });
 
   // Poll status / subscriptions in parallel on an interval.
   await Promise.all([pollStatus(), pollSubscriptions()]);

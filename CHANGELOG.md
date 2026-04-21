@@ -5,6 +5,45 @@ Notable changes, newest first. Follows [Keep a Changelog](https://keepachangelog
 ## [Unreleased]
 
 ### Added
+- **Admin UI for `/nl-subscribe` + Web Speech voice input.** New
+  textarea on `/admin` posts natural-language requests to the
+  endpoint and renders the echo'd `FilterSpec` + resolved subs for
+  confirmation. Optional provider-picker dropdown (blank = server
+  default). A mic button wires the Web Speech API
+  (`SpeechRecognition` / `webkitSpeechRecognition`) into the
+  textarea — interim results stream live while the user speaks;
+  clicking again stops early. Unsupported browsers (Firefox, Safari
+  in some builds) get a disabled button with a tooltip. New module
+  `http/static/js/nl_subscribe.js`, new CSS block in `admin.css`,
+  and the admin template grows one section above the existing
+  Subscriptions table. The page also listens for a custom
+  `nl-subscribe:applied` event so the subs table refreshes
+  immediately after dispatch rather than waiting for the 1s poll.
+- **Gemini schema-dialect fixes (`additionalProperties`, empty-
+  string enums).** First live smoke test against
+  `gemini-3-flash-preview` surfaced two more Gemini-specific
+  restrictions beyond the already-documented `type: [...]` unions:
+  Gemini rejects `additionalProperties` at any depth
+  ("Unknown name" 400), and rejects empty-string values inside
+  `enum` arrays ("cannot be empty" 400). `normalizeForGemini` now
+  strips both recursively while leaving the shared
+  `FilterSchemaJSON` intact for Anthropic / OpenAI. New unit tests
+  (`TestGeminiSchema_StripsAdditionalProperties`,
+  `TestGeminiSchema_StripsEmptyStringEnumMembers`) lock the
+  adaptation in.
+- **Integration tests (`service/llm/integration_test.go`).** Guarded
+  by env vars — skipped when keys aren't set, so `go test ./...`
+  stays offline. Hit each provider's real API with a canonical
+  prompt ("SPY calls 250-270 expiring in March") and assert the
+  model extracted the expected root/kind/windows. One cross-
+  provider sanity check (`TestIntegration_AllProvidersAgree`) runs
+  when all three keys are configured. First live-key run verified:
+  Anthropic `claude-haiku-4-5` (~1.2s), OpenAI `gpt-5.4-mini`
+  (~1.1s), Gemini `gemini-3-flash-preview` (~5s). Use
+  `set -a && . service/.env.dev && set +a && go test -v
+  -run TestIntegration ./service/llm/`.
+
+### Added
 - **`POST /nl-subscribe` — natural-language subscription endpoint.**
   Body `{text, provider?}`. A provider-agnostic `llm.Provider`
   interface (Anthropic / OpenAI / Gemini) extracts a structured

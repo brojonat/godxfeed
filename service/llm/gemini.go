@@ -122,10 +122,22 @@ func (g *GeminiProvider) Extract(ctx context.Context, userText string, now time.
 }
 
 // geminiSchema adapts FilterSchemaJSON to Gemini's responseSchema
-// dialect. Gemini accepts an OpenAPI-ish subset that disallows
-// `type: [...]` unions; nullable fields use `nullable: true` instead.
-// The function walks the parsed schema and rewrites exactly that
-// construct — anything else passes through untouched.
+// dialect. Gemini accepts an OpenAPI-ish subset with three important
+// differences from strict JSON Schema:
+//
+//  1. No `type: [...]` unions — nullable fields use `nullable: true`.
+//  2. No `additionalProperties` key (at any depth). Gemini rejects
+//     the whole request with HTTP 400 if one appears.
+//  3. No empty-string members in `enum` arrays — Gemini treats `""`
+//     as "cannot be empty" and 400s. The shared schema uses `""` on
+//     the `kind` field to mean "equity-only"; we strip the empty
+//     value from enum lists for Gemini but keep the type constraint
+//     as string, so the model can still return "" at runtime (just
+//     won't be enum-validated).
+//
+// The function walks the parsed schema recursively, rewriting (1) and
+// stripping (2) wherever they show up. Anything else passes through
+// untouched.
 func geminiSchema() (map[string]any, error) {
 	var schema map[string]any
 	if err := json.Unmarshal([]byte(FilterSchemaJSON), &schema); err != nil {
@@ -157,19 +169,42 @@ func normalizeForGemini(node map[string]any) {
 			node["nullable"] = true
 		}
 	}
-	// Recurse into any nested schema objects.
-	for _, key := range []string{"properties", "items"} {
-		switch v := node[key].(type) {
+	// Gemini rejects additionalProperties at any depth — strip it.
+	delete(node, "additionalProperties")
+
+	// Strip empty strings from enum arrays — Gemini rejects them.
+	if enum, ok := node["enum"].([]any); ok {
+		filtered := enum[:0]
+		for _, v := range enum {
+			if s, isStr := v.(string); isStr && s == "" {
+				continue
+			}
+			filtered = append(filtered, v)
+		}
+		if len(filtered) == 0 {
+			// An all-empty enum would leave an invalid empty list —
+			// drop the enum constraint entirely and let the type
+			// keyword do the validation.
+			delete(node, "enum")
+		} else {
+			node["enum"] = filtered
+		}
+	}
+
+	// Recurse into every child that's itself a schema node.
+	//   - `properties` is a map of {name → schema}
+	//   - `items` can be a single schema (for typed arrays)
+	// We walk everything defensively rather than whitelisting keywords
+	// so future schema additions don't silently skip adaptation.
+	for _, v := range node {
+		switch c := v.(type) {
 		case map[string]any:
-			for _, child := range v {
-				if m, ok := child.(map[string]any); ok {
+			normalizeForGemini(c)
+		case []any:
+			for _, item := range c {
+				if m, ok := item.(map[string]any); ok {
 					normalizeForGemini(m)
 				}
-			}
-			// items (when singular object) is also handled here for
-			// that case via the inner loop.
-			if key == "items" {
-				normalizeForGemini(v)
 			}
 		}
 	}

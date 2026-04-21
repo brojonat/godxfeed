@@ -146,3 +146,89 @@ button.remove-sub:disabled { opacity: .5; cursor: wait; }
 .sym-plot .xaxis path, .sym-plot .yaxis path,
 .sym-plot .xaxis line, .sym-plot .yaxis line { stroke: #3a4250; }
 .sym-plot .xaxis text, .sym-plot .yaxis text { fill: #9aa4ae; font-size: 10px; }
+
+/* ───────── Natural-language subscribe ───────── */
+.nl-form {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  margin-bottom: .75rem;
+}
+.nl-form textarea {
+  background: #0f1419;
+  color: #e6e6e6;
+  border: 1px solid #2a313b;
+  border-radius: 4px;
+  padding: .5rem .75rem;
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+  min-height: 2.2em;
+}
+.nl-form textarea:focus {
+  outline: none;
+  border-color: #4a9eff;
+}
+.nl-row {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+.nl-row select {
+  background: #0f1419;
+  color: #e6e6e6;
+  border: 1px solid #2a313b;
+  border-radius: 4px;
+  padding: .25rem .4rem;
+  font-size: 13px;
+}
+#nl-mic {
+  min-width: 70px;
+}
+#nl-mic.listening {
+  background: #a44141;
+  border-color: #c96262;
+  color: #fff;
+  animation: nl-pulse 1.2s ease-in-out infinite;
+}
+@keyframes nl-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .6; }
+}
+.nl-result {
+  background: #1a1f26;
+  border: 1px solid #2a313b;
+  border-radius: 4px;
+  padding: .6rem .8rem;
+  margin-top: .5rem;
+  font-size: 13px;
+}
+.nl-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  align-items: center;
+  margin-bottom: .5rem;
+}
+.nl-filter code {
+  background: #0f1419;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.nl-subs {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.nl-subs th, .nl-subs td {
+  padding: .3rem .5rem;
+  border-bottom: 1px solid #2a313b;
+  text-align: left;
+}
+.nl-subs th {
+  color: #888;
+  font-weight: 500;
+  background: transparent;
+}
