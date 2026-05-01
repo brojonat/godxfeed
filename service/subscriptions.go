@@ -23,9 +23,11 @@ type SubscriptionInfo struct {
 
 // DXLinkStatus describes the health of the service's one dxLink WebSocket.
 type DXLinkStatus struct {
-	Connected     bool   `json:"connected"`
-	Authenticated bool   `json:"authenticated"`
-	DXLinkURL     string `json:"dxlinkURL"`
+	Connected        bool   `json:"connected"`
+	Authenticated    bool   `json:"authenticated"`
+	DXLinkURL        string `json:"dxlinkURL"`
+	ReconnectAttempt int    `json:"reconnectAttempt,omitempty"`
+	LastError        string `json:"lastError,omitempty"`
 }
 
 // FeedController is the slice of dxclient.Client that SubscriptionManager
@@ -69,6 +71,25 @@ func NewSubscriptionManager(fc FeedController) *SubscriptionManager {
 		state: map[subKey]*subState{},
 		now:   time.Now,
 	}
+}
+
+// Rebind swaps the FeedController to a freshly-connected client and
+// replays every active subscription onto the new wire in a single
+// UpdateSubscription call. Subscription state (symbols, msg counts,
+// timestamps) is preserved — only the transport changes.
+func (m *SubscriptionManager) Rebind(fc FeedController) error {
+	m.mu.Lock()
+	m.fc = fc
+	subs := make([]dxclient.FeedSub, 0, len(m.state))
+	for k := range m.state {
+		subs = append(subs, dxclient.FeedSub{Event: k.event, Symbol: k.symbol})
+	}
+	m.mu.Unlock()
+
+	if len(subs) == 0 {
+		return nil
+	}
+	return fc.UpdateSubscription(subs, nil)
 }
 
 // BulkAdd starts a batch of subscriptions in a single wire call. Use for

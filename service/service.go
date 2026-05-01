@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	dx "github.com/brojonat/godxfeed/dxclient"
 	"github.com/brojonat/godxfeed/service/api"
@@ -115,9 +116,10 @@ type service struct {
 	subs       *SubscriptionManager
 
 	// dxLink connection state. Everything inside here is guarded by dxMu.
-	dxMu     sync.RWMutex
-	dxClient dx.Client
-	dxStatus DXLinkStatus
+	dxMu           sync.RWMutex
+	dxClient       dx.Client
+	dxClientCancel context.CancelFunc
+	dxStatus       DXLinkStatus
 }
 
 // NewService constructs the service. Note the absence of a *pgxpool / DB
@@ -357,8 +359,9 @@ func (s *service) GetStreamSymbols(symbol string, getRelateds func(string) ([]st
 
 // StartIngress dials dxLink using a fresh streamer token, authenticates,
 // subscribes to the supplied symbols, and starts a goroutine that publishes
-// every incoming FEED_DATA event to NATS verbatim. Returns after the
-// connection is established; the loop runs until ctx is canceled.
+// every incoming FEED_DATA event to NATS verbatim. Returns after the first
+// connection is established; the loop runs until ctx is canceled, reconnecting
+// with exponential backoff on connection drop.
 //
 // This is the ONLY path from dxLink to NATS. Downstream (DB persister, UI,
 // future Bayesian sidecar) are all NATS subscribers.
@@ -373,8 +376,43 @@ func (s *service) StartIngress(ctx context.Context, symbols []string) error {
 		return fmt.Errorf("ingress: already started")
 	}
 
+	feed, err := s.dialAndSubscribe(ctx)
+	if err != nil {
+		s.dxMu.Unlock()
+		return fmt.Errorf("ingress: %w", err)
+	}
+	s.dxMu.Unlock()
+
+	// Register the initial symbols in a single wire call.
+	if len(symbols) > 0 {
+		pairs := make([]struct{ Event, Symbol string }, 0, len(symbols))
+		for _, sym := range symbols {
+			pairs = append(pairs, struct{ Event, Symbol string }{Event: "Quote", Symbol: sym})
+		}
+		if err := s.subs.BulkAdd(pairs); err != nil {
+			return fmt.Errorf("ingress: initial subscribe: %w", err)
+		}
+	}
+
+	go s.ingressWithReconnect(ctx, feed)
+	return nil
+}
+
+// dialAndSubscribe creates a fresh dxLink client, dials, authenticates,
+// and opens the feed channel. On first call it creates a new
+// SubscriptionManager; on reconnect it rebinds the existing one to the
+// new client and replays all active subscriptions. Caller must hold
+// s.dxMu for write.
+func (s *service) dialAndSubscribe(ctx context.Context) (<-chan dx.Message, error) {
+	// Cancel the previous client's goroutines if any.
+	if s.dxClientCancel != nil {
+		s.dxClientCancel()
+	}
+
+	clientCtx, clientCancel := context.WithCancel(ctx)
+
 	cl := func(level int, msg string, args ...any) { s.Log(level, msg, args...) }
-	s.dxClient = dx.NewClient(cl)
+	client := dx.NewClient(cl)
 
 	// Mock-mode: dxForceURL bypasses the tastytrade streamer-token round
 	// trip entirely. Any token works — tools/synth noop-authorizes.
@@ -385,9 +423,8 @@ func (s *service) StartIngress(ctx context.Context, symbols []string) error {
 	} else {
 		td, err := s.NewStreamerToken(ctx)
 		if err != nil {
-			s.dxClient = nil
-			s.dxMu.Unlock()
-			return fmt.Errorf("ingress: get streamer token: %w", err)
+			clientCancel()
+			return nil, fmt.Errorf("get streamer token: %w", err)
 		}
 		dialURL = td.DXLinkURL
 		if dialURL == "" {
@@ -395,60 +432,126 @@ func (s *service) StartIngress(ctx context.Context, symbols []string) error {
 		}
 		authToken = td.Token
 	}
-	s.Log(int(slog.LevelInfo), "dialing dxlink", "url", dialURL, "symbols", symbols, "mock", s.dxForceURL != "")
+	s.Log(int(slog.LevelInfo), "dialing dxlink", "url", dialURL, "mock", s.dxForceURL != "")
 
-	if err := s.dxClient.Dial(ctx, dialURL, func(msg dx.MessageSetup) error {
+	if err := client.Dial(clientCtx, dialURL, func(msg dx.MessageSetup) error {
 		s.Log(int(slog.LevelDebug), "dxlink setup reply", "msg", fmt.Sprintf("%+v", msg))
 		return nil
 	}); err != nil {
-		s.dxClient = nil
-		s.dxMu.Unlock()
-		return fmt.Errorf("ingress: dial dxlink: %w", err)
+		clientCancel()
+		return nil, fmt.Errorf("dial: %w", err)
 	}
-	s.dxStatus.Connected = true
-	s.dxStatus.DXLinkURL = dialURL
 
-	if err := s.dxClient.Authenticate(authToken); err != nil {
+	if err := client.Authenticate(authToken); err != nil {
+		clientCancel()
+		return nil, fmt.Errorf("authenticate: %w", err)
+	}
+
+	if err := client.OpenFeed(); err != nil {
+		clientCancel()
+		return nil, fmt.Errorf("open feed: %w", err)
+	}
+
+	// Rebind existing SubscriptionManager or create a new one.
+	if s.subs != nil {
+		if err := s.subs.Rebind(client); err != nil {
+			clientCancel()
+			return nil, fmt.Errorf("rebind subscriptions: %w", err)
+		}
+	} else {
+		s.subs = NewSubscriptionManager(client)
+	}
+
+	feed, _ := client.C()
+	s.dxClient = client
+	s.dxClientCancel = clientCancel
+	s.dxStatus = DXLinkStatus{
+		Connected:     true,
+		Authenticated: true,
+		DXLinkURL:     dialURL,
+	}
+	return feed, nil
+}
+
+// ingressWithReconnect runs the ingress loop and reconnects with
+// exponential backoff when the connection drops. Exits only when
+// ctx is cancelled.
+func (s *service) ingressWithReconnect(ctx context.Context, feed <-chan dx.Message) {
+	for {
+		s.runIngressLoop(ctx, feed)
+
+		if ctx.Err() != nil {
+			s.Log(int(slog.LevelInfo), "ingress: context cancelled, not reconnecting")
+			s.dxMu.Lock()
+			s.dxStatus = DXLinkStatus{}
+			s.dxMu.Unlock()
+			return
+		}
+
+		// Connection dropped. Tear down old client.
+		s.Log(int(slog.LevelWarn), "ingress: connection lost, starting reconnect")
+		s.dxMu.Lock()
+		if s.dxClientCancel != nil {
+			s.dxClientCancel()
+		}
+		oldClient := s.dxClient
 		s.dxClient = nil
 		s.dxStatus = DXLinkStatus{}
 		s.dxMu.Unlock()
-		return fmt.Errorf("ingress: authenticate: %w", err)
-	}
-	s.dxStatus.Authenticated = true
 
-	if err := s.dxClient.OpenFeed(); err != nil {
+		if oldClient != nil {
+			oldClient.Wait()
+		}
+
+		// Reconnect with backoff.
+		var err error
+		feed, err = s.reconnectWithBackoff(ctx)
+		if err != nil {
+			s.Log(int(slog.LevelInfo), "ingress: reconnect aborted", "err", err)
+			return
+		}
+	}
+}
+
+// reconnectWithBackoff retries dialAndSubscribe until it succeeds or ctx
+// is cancelled. Returns the new feed channel on success.
+func (s *service) reconnectWithBackoff(ctx context.Context) (<-chan dx.Message, error) {
+	b := newBackoff()
+	for {
+		delay := b.next()
+		s.Log(int(slog.LevelInfo), "ingress: reconnecting",
+			"delay", delay, "attempt", b.attempt)
+
+		s.dxMu.Lock()
+		s.dxStatus.ReconnectAttempt = b.attempt
 		s.dxMu.Unlock()
-		return fmt.Errorf("ingress: open feed: %w", err)
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+
+		s.dxMu.Lock()
+		feed, err := s.dialAndSubscribe(ctx)
+		if err != nil {
+			s.dxStatus.LastError = err.Error()
+			s.dxMu.Unlock()
+			s.Log(int(slog.LevelError), "ingress: reconnect attempt failed",
+				"attempt", b.attempt, "err", err)
+			continue
+		}
+		s.dxMu.Unlock()
+
+		s.Log(int(slog.LevelInfo), "ingress: reconnected successfully",
+			"attempt", b.attempt)
+		return feed, nil
 	}
-
-	// Now that the dxLink feed channel is open, construct the
-	// SubscriptionManager bound to this client. It owns every future
-	// add/remove on the wire.
-	s.subs = NewSubscriptionManager(s.dxClient)
-
-	feed, _ := s.dxClient.C()
-	s.dxMu.Unlock()
-
-	// Register the initial symbols in a single wire call. Sequential
-	// per-symbol Adds race the dxclient's handler dispatch (see
-	// BulkAdd's doc). One batched UpdateSubscription needs only one ack,
-	// so there's no window. Quote-only for now — Phase 3 will broaden
-	// FEED_SETUP's accepted event field set and thread the event type
-	// through from callers.
-	pairs := make([]struct{ Event, Symbol string }, 0, len(symbols))
-	for _, sym := range symbols {
-		pairs = append(pairs, struct{ Event, Symbol string }{Event: "Quote", Symbol: sym})
-	}
-	if err := s.subs.BulkAdd(pairs); err != nil {
-		return fmt.Errorf("ingress: initial subscribe: %w", err)
-	}
-
-	go s.runIngressLoop(ctx, feed)
-	return nil
 }
 
 // runIngressLoop consumes dxLink messages and publishes FEED_DATA events to
-// NATS verbatim. Runs until ctx is canceled.
+// NATS verbatim. Exits when the feed channel closes (connection dropped) or
+// ctx is cancelled.
 func (s *service) runIngressLoop(ctx context.Context, feed <-chan dx.Message) {
 	for {
 		select {

@@ -52,10 +52,14 @@ type Client interface {
 	UpdateSubscription(add, remove []FeedSub) error
 	// Send sends the supplied message to the dxlink service
 	Send(Message) error
-	// Returns a channel of []byte consumers can listen on for all messages
+	// Returns a channel of []byte consumers can listen on for all messages.
+	// The channel is closed when the connection dies.
 	C() (<-chan Message, string)
 	// Log allows implementors to use their own logging dependencies
 	Log(int, string, ...any)
+	// Done returns a channel that is closed when the connection is lost
+	// (read/write loops have exited).
+	Done() <-chan struct{}
 	// Block until done
 	Wait()
 }
@@ -67,6 +71,7 @@ func NewClient(lf func(int, string, ...interface{})) Client {
 		egress:   make(chan egressPayload),
 		handlers: make(map[string]func(Message)),
 		logfunc:  lf,
+		done:     make(chan struct{}),
 	}
 }
 
@@ -84,6 +89,11 @@ type client struct {
 	// IDs start at 1 via getNextChanID, so the zero value works as the
 	// "unopened" sentinel.
 	feedChannelID int
+
+	// done is closed when the connection dies (either read or write loop
+	// exits). Used by Send, C, and external callers to detect death.
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // Dial sets up the websocket connection and performs the initial setup/auth
@@ -170,7 +180,13 @@ func (c *client) Authenticate(token string) error {
 	})
 
 	c.Send(MessageAuth{MessageBase: MessageBase{Type: MESSAGE_TYPE_AUTH, Channel: 0}, Token: token})
-	return <-done
+	select {
+	case err := <-done:
+		return err
+	case <-c.done:
+		c.removeMessageHandler(hid)
+		return ErrClient{Message: "connection closed during authentication"}
+	}
 }
 
 // OpenFeed opens the long-lived FEED service channel and completes the
@@ -241,6 +257,9 @@ func (c *client) OpenFeed() error {
 	case <-timer.C:
 		c.removeMessageHandler(hid)
 		return fmt.Errorf("OpenFeed: timeout waiting for FEED_CONFIG on channel %d", cid)
+	case <-c.done:
+		c.removeMessageHandler(hid)
+		return ErrClient{Message: "connection closed during feed setup"}
 	}
 
 	c.lock.Lock()
@@ -291,13 +310,22 @@ func (c *client) C() (<-chan Message, string) {
 	out := make(chan Message)
 	hid := fmt.Sprintf("streamer-%s", uuid.New())
 	c.addMessageHandler(hid, func(m Message) {
-		out <- m
+		select {
+		case out <- m:
+		case <-c.done:
+		}
 	})
+	go func() {
+		<-c.done
+		c.removeMessageHandler(hid)
+		close(out)
+	}()
 	return out, hid
 }
 
 func (c *client) writeForever(ctx context.Context) {
 	defer c.wg.Done()
+	defer c.closeOnce.Do(func() { close(c.done) })
 	for {
 		select {
 		// handle cancellation
@@ -322,6 +350,7 @@ func (c *client) writeForever(ctx context.Context) {
 
 func (c *client) readForever(ctx context.Context) {
 	defer c.wg.Done()
+	defer c.closeOnce.Do(func() { close(c.done) })
 	ingress := make(chan Message)
 	readErr := make(chan error, 1) // buffered: inner goroutine never blocks on send
 
@@ -504,7 +533,8 @@ type egressPayload struct {
 }
 
 // Send sends the supplied message and blocks until it is sent. It is safe to
-// call Send from multiple goroutines.
+// call Send from multiple goroutines. Returns ErrClient if the connection is
+// dead rather than blocking forever.
 func (c *client) Send(m Message) error {
 	b, err := m.JSON()
 	if err != nil {
@@ -515,14 +545,27 @@ func (c *client) Send(m Message) error {
 		done: done,
 		data: b,
 	}
-	c.egress <- p
-	<-done
+	select {
+	case c.egress <- p:
+	case <-c.done:
+		return ErrClient{Message: "connection closed"}
+	}
+	select {
+	case <-done:
+	case <-c.done:
+		return ErrClient{Message: "connection closed"}
+	}
 	c.Log(int(slog.LevelDebug), "sent data", "data", string(b))
 	return nil
 }
 
 func (c *client) Log(level int, s string, args ...any) {
 	c.logfunc(level, s, args...)
+}
+
+// Done returns a channel that is closed when the connection dies.
+func (c *client) Done() <-chan struct{} {
+	return c.done
 }
 
 // Wait blocks until the client is done reading/writing
@@ -559,8 +602,15 @@ func (c *client) openChannel(req MessageChannelRequest) error {
 	c.lock.Unlock()
 
 	if err := c.Send(req); err != nil {
+		c.removeMessageHandler(hid)
 		return fmt.Errorf("failed to send channel request: %w", err)
 	}
 
-	return <-done
+	select {
+	case err := <-done:
+		return err
+	case <-c.done:
+		c.removeMessageHandler(hid)
+		return ErrClient{Message: "connection closed during channel open"}
+	}
 }

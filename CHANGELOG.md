@@ -4,6 +4,18 @@ Notable changes, newest first. Follows [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+### Added
+- **dxLink retry/backoff on connection drop.** The ingress now
+  reconnects automatically with exponential backoff (1s → 60s, jittered)
+  when the WebSocket drops. `dialAndSubscribe` extracts the connection
+  lifecycle; `SubscriptionManager.Rebind` replays all active subscriptions
+  on the new wire. `Client.Done()` signals connection death; `C()` closes
+  its output channel on death so the ingress loop exits cleanly. `Send`
+  returns `ErrClient` on dead connections instead of blocking forever.
+  `DXLinkStatus` gains `reconnectAttempt` and `lastError` for
+  observability. Each client gets its own derived context for clean
+  teardown. New files: `service/backoff.go`. 44 tests pass with `-race`.
+
 ### Fixed
 - **dxclient `readForever` goroutine leak + data race.** The inner read
   goroutine shared a `loop` bool with the outer dispatch loop (race

@@ -192,8 +192,19 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
       token validation to `fakeServer`, and rewrote `TestClientSetup`
       to use `fakeServer` (httptest, random port) instead of
       `mock_server` (hardcoded :8080). All 9 tests pass with `-race`.
-- [ ] Retry/backoff on the dxLink connection (currently one-shot at ingress
-      start).
+- [x] Retry/backoff on the dxLink connection. Done 2026-04-30:
+      `ingressWithReconnect` detects connection death via the new
+      `Client.Done()` channel + `C()` channel closure, cancels the
+      old client's context, waits for goroutine drain, then retries
+      via `reconnectWithBackoff` (exponential 1s→60s with jitter).
+      `dialAndSubscribe` extracts the connection lifecycle into a
+      reusable helper; on reconnect it calls `SubscriptionManager.Rebind`
+      to replay all active subscriptions on the new wire. `Send` is now
+      non-blocking on dead connections (returns `ErrClient` via `done`
+      channel guard). `DXLinkStatus` gains `ReconnectAttempt` and
+      `LastError` fields for observability. Per-client derived contexts
+      ensure clean teardown of old goroutines. 44 tests pass with
+      `-race` across `dxclient/` and `service/`.
 - [x] Decide whether `SubscriptionManager` owns the dxLink client (enables Phase
       2 add/remove) or stays state-only. — Owns it, via a small
       `FeedController` interface (Accept interfaces, return structs).

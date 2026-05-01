@@ -253,6 +253,92 @@ func TestSubscriptionManager_ConcurrentObserveIsSafe(t *testing.T) {
 	}
 }
 
+// TestSubscriptionManager_RebindResubscribes — Rebind swaps the controller
+// and replays all active subscriptions to the new controller.
+func TestSubscriptionManager_RebindResubscribes(t *testing.T) {
+	fc1 := &fakeFeedController{}
+	m := NewSubscriptionManager(fc1)
+
+	m.Add("Quote", "SPY")
+	m.Add("Quote", "AAPL")
+	m.Add("Greeks", "SPY")
+	m.Observe("Quote", "SPY")
+	m.Observe("Quote", "SPY")
+
+	fc2 := &fakeFeedController{}
+	if err := m.Rebind(fc2); err != nil {
+		t.Fatalf("Rebind: %v", err)
+	}
+
+	// fc2 should have received a single UpdateSubscription with all 3 subs.
+	calls := fc2.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("want 1 call on new controller, got %d", len(calls))
+	}
+	if len(calls[0].add) != 3 {
+		t.Errorf("want 3 adds, got %d", len(calls[0].add))
+	}
+
+	// Msg counts should be preserved.
+	snap := m.Snapshot()
+	for _, s := range snap {
+		if s.Event == "Quote" && s.Symbol == "SPY" && s.MsgCount != 2 {
+			t.Errorf("SPY msgCount = %d, want 2 (preserved across Rebind)", s.MsgCount)
+		}
+	}
+
+	// New Add should go to fc2, not fc1.
+	if err := m.Add("Quote", "QQQ"); err != nil {
+		t.Fatalf("Add after Rebind: %v", err)
+	}
+	if got := len(fc2.Calls()); got != 2 {
+		t.Errorf("fc2 call count = %d, want 2 (rebind + new add)", got)
+	}
+	if got := len(fc1.Calls()); got != 3 {
+		t.Errorf("fc1 call count = %d, want 3 (unchanged after rebind)", got)
+	}
+}
+
+// TestSubscriptionManager_RebindEmptyState — Rebind with no subscriptions
+// should swap the controller without any wire call.
+func TestSubscriptionManager_RebindEmptyState(t *testing.T) {
+	fc1 := &fakeFeedController{}
+	m := NewSubscriptionManager(fc1)
+
+	fc2 := &fakeFeedController{}
+	if err := m.Rebind(fc2); err != nil {
+		t.Fatalf("Rebind: %v", err)
+	}
+	if got := len(fc2.Calls()); got != 0 {
+		t.Errorf("want 0 calls on empty rebind, got %d", got)
+	}
+}
+
+// TestSubscriptionManager_RebindWireError — if the re-subscribe wire call
+// fails, Rebind returns an error. The controller is still swapped (the old
+// one is dead) so subsequent Adds go to the new controller.
+func TestSubscriptionManager_RebindWireError(t *testing.T) {
+	fc1 := &fakeFeedController{}
+	m := NewSubscriptionManager(fc1)
+	m.Add("Quote", "SPY")
+
+	fc2 := &fakeFeedController{err: errors.New("wire error")}
+	if err := m.Rebind(fc2); err == nil {
+		t.Fatal("Rebind must surface wire error")
+	}
+
+	// fc should be swapped even on error.
+	fc2.mu.Lock()
+	fc2.err = nil
+	fc2.mu.Unlock()
+	if err := m.Add("Quote", "AAPL"); err != nil {
+		t.Fatalf("Add after failed Rebind: %v", err)
+	}
+	if got := len(fc2.Calls()); got != 1 {
+		t.Errorf("want 1 call on fc2 after retry, got %d", got)
+	}
+}
+
 // TestSubscriptionManager_SortOrder — Snapshot order contract is stable.
 func TestSubscriptionManager_SortOrder(t *testing.T) {
 	m := NewSubscriptionManager(&fakeFeedController{})
