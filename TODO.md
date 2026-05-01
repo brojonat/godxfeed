@@ -109,16 +109,16 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
       resolver owns all expiry/strike/kind filtering. 35 llm-package
       tests + 6 handler tests. Voice input deferred to a separate
       frontend task; text handles every current use case.
-- [ ] **Refactor analytics sidecar to read quotes from NATS JetStream**
-      instead of the analytic store (TimescaleDB). JetStream gives a
-      replay-capable, low-latency buffer that's already the source of
-      truth for the firehose — fitting models off TSDB adds a slow hop
-      and couples the model loop to sink health. Eventually richer
-      models that need historical joins can still read from the
-      analytic store; for now JetStream is faster and sufficient.
-      Requires enabling JetStream on the NATS server and adding a
-      stream over `godxfeed.>` with a short retention window
-      (e.g. 5-10 min, matching the fit-window budget).
+- [x] **Refactor analytics sidecar to read quotes from NATS JetStream.**
+      Done 2026-04-22: `QUOTES` JetStream stream over
+      `godxfeed.quote.>` with 10min memory-backed retention, created
+      at Go server startup (`service/jetstream.go`). Analytics sidecar
+      (`tools/analytics/publisher.py`) now subscribes via JetStream
+      push consumer with `DeliverPolicy.ALL` + `ordered_consumer=True`
+      for replay on restart; falls back to plain NATS core subscribe
+      if JetStream is unavailable. NATS config updated: `godxfeed`
+      account has `jetstream: enabled`. Three new tests cover
+      JetStream, fallback, and plain-NATS ingest paths.
 
 ## Follow-ups on LLM subscription interface
 
@@ -178,8 +178,20 @@ Flat list, one line per task, status markers: `[ ]` open, `[x]` done,
       exclusively produced by the dxLink ingress / `SubscriptionManager`;
       off-market dev goes through the synth mock so the stream and the
       subscriptions table stay consistent.
-- [ ] `dxclient/client_test.go` has a pre-existing teardown goroutine leak /
-      keepalive panic in the mock server. Fix or skip during `go test ./...`.
+- [x] `dxclient/client_test.go` pre-existing teardown goroutine leak /
+      keepalive panic. Done 2026-04-22: Root causes: (1) `Authenticate`
+      didn't clean up its handler on the error path, leaking a handler
+      that blocked `readForever`'s dispatch on subsequent messages;
+      (2) `readForever`'s inner goroutine used a shared `loop` bool
+      (data race) and never returned on read errors (goroutine leak);
+      (3) the mock server sent one UNAUTHORIZED for a bad token but
+      the client expected two (matching real tastytrade), causing an
+      infinite hang. Fix: rewrote `readForever` to use a buffered
+      error channel + ctx-aware sends (no shared mutable state),
+      added handler cleanup on the `Authenticate` error path, added
+      token validation to `fakeServer`, and rewrote `TestClientSetup`
+      to use `fakeServer` (httptest, random port) instead of
+      `mock_server` (hardcoded :8080). All 9 tests pass with `-race`.
 - [ ] Retry/backoff on the dxLink connection (currently one-shot at ingress
       start).
 - [x] Decide whether `SubscriptionManager` owns the dxLink client (enables Phase

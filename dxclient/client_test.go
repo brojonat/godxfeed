@@ -4,53 +4,33 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/brojonat/godxfeed/dxclient"
-	"github.com/brojonat/godxfeed/mock_server"
-	"github.com/matryer/is"
 )
 
-func runMockServer(ctx context.Context, addr string) error {
-	return mock_server.ListenAndServe(ctx, nil, addr)
-}
-
 func TestClientSetup(t *testing.T) {
-	is := is.New(t)
-	mockServerAddr := ":8080"
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
+	fs := newFakeServer(t)
+	fs.validToken = "good-token"
 
-	// setup the test server
-	testServerDone := make(chan error)
-	go func() {
-		testServerDone <- runMockServer(ctx, mockServerAddr)
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	// setup the client
-	logfunc := func(lvl int, msg string, args ...any) {
-		switch lvl {
-		case int(slog.LevelDebug):
-			slog.Debug(msg, args...)
-		case int(slog.LevelInfo):
-			slog.Info(msg, args...)
-		case int(slog.LevelWarn):
-			slog.Warn(msg, args...)
-		case int(slog.LevelError):
-			slog.Error(msg, args...)
-		}
+	c := dxclient.NewClient(func(lvl int, msg string, args ...any) {
+		slog.Default().Log(ctx, slog.Level(lvl), msg, args...)
+	})
+
+	if err := c.Dial(ctx, fs.wsURL(), func(dxclient.MessageSetup) error { return nil }); err != nil {
+		t.Fatalf("dial: %v", err)
 	}
-	c := dxclient.NewClient(logfunc)
 
-	// dial the client; this will also send the keepalive and setup messages
-	is.NoErr(c.Dial(ctx, "ws://localhost:8080/ws",
-		func(ms dxclient.MessageSetup) error { return nil }))
+	// bad token must return an error
+	if err := c.Authenticate("bad-token"); err == nil {
+		t.Fatal("Authenticate with bad token must error, got nil")
+	}
 
-	// returns an error on auth failure, otherwise nil
-	is.True(c.Authenticate("bad token value") != nil)
-	is.NoErr(c.Authenticate(mock_server.ValidAuthToken))
-
-	// teardown
-	cancel()
-	c.Wait()
-	// <-testServerDone
+	// good token must succeed
+	if err := c.Authenticate("good-token"); err != nil {
+		t.Fatalf("Authenticate with good token: %v", err)
+	}
 }

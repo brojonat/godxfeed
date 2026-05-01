@@ -4,6 +4,36 @@ Notable changes, newest first. Follows [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+### Fixed
+- **dxclient `readForever` goroutine leak + data race.** The inner read
+  goroutine shared a `loop` bool with the outer dispatch loop (race
+  detected by `-race`), never returned on read errors (goroutine leak),
+  and blocked on an unbuffered `errCancel` channel after the outer loop
+  exited. Replaced with a buffered error channel, context-aware sends on
+  `ingress`, and an explicit `return` on read error — no shared mutable
+  state between goroutines.
+- **`Authenticate` handler leak on bad-token path.** The one-shot AUTH
+  handler was only removed on success; on the error path it stayed
+  registered, blocking the handler dispatcher on subsequent messages.
+- **`TestClientSetup` timeout / port collision.** Rewrote to use the
+  in-package `fakeServer` (`httptest.NewServer`, random port) instead of
+  the external `mock_server` package (hardcoded `:8080`). Added token
+  validation to `fakeServer` so the bad-token path sends two
+  UNAUTHORIZED replies matching real tastytrade behavior.
+
+### Added
+- **JetStream replay buffer for analytics sidecar.** The NATS server
+  now hosts a `QUOTES` JetStream stream over `godxfeed.quote.>` with
+  10-minute memory-backed retention. The Go server ensures the stream
+  exists at startup (`service/jetstream.go`). The Python analytics
+  sidecar (`tools/analytics/`) preferentially subscribes via JetStream
+  with `DeliverPolicy.ALL` + `ordered_consumer=True`, so on restart it
+  replays the stream's retention window and refills its in-memory
+  buffers before the first fit. Falls back to plain NATS core subscribe
+  if JetStream isn't available (graceful degradation). NATS config
+  updated: `godxfeed` account now has `jetstream: enabled`. Three new
+  publisher tests cover the JetStream, fallback, and plain-NATS paths.
+
 ### Added
 - **Admin UI for `/nl-subscribe` + Web Speech voice input.** New
   textarea on `/admin` posts natural-language requests to the

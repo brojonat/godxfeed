@@ -56,14 +56,22 @@ subscribe to quotes, fit a model, publish a density, and the `/admin`
 panels pick it up automatically.
 
 The first such sidecar lives at [`tools/analytics/`](./tools/analytics/)
-— a Python/FastAPI service that subscribes to `godxfeed.quote.>`, buffers
-the last ~60s of mids per symbol, and every `ANALYTICS_INTERVAL_S`
-fits `log-returns ~ Normal(0, σ)` with PyMC NUTS on the trailing 30s.
-It then publishes the posterior-*predictive* density over the next
-mid (`LogNormal(log p₀, σ)` averaged across σ posterior samples) on
+— a Python/FastAPI service that subscribes to `godxfeed.quote.>` via
+**NATS JetStream**, buffers the last ~60s of mids per symbol, and
+every `ANALYTICS_INTERVAL_S` fits `log-returns ~ Normal(0, σ)` with
+PyMC NUTS on the trailing 30s. It then publishes the
+posterior-*predictive* density over the next mid (`LogNormal(log p₀, σ)`
+averaged across σ posterior samples) on
 `godxfeed.analytics.posterior.<SYMBOL>`, which the `/admin` and
 `/plots?plot_kind=symbol_detail` overlays pick up automatically
 (`make analytics-serve` or `make analytics-docker-run`).
+
+The Go server ensures a `QUOTES` JetStream stream exists at startup
+(subjects `godxfeed.quote.>`, 10-minute memory-backed retention). The
+sidecar subscribes with `DeliverPolicy.ALL`, so on restart it replays
+the stream's retention window and refills its in-memory buffers before
+the first model fit — no cold-start gap. If JetStream isn't available,
+the sidecar falls back to a plain NATS core subscription gracefully.
 
 ## Architecture
 

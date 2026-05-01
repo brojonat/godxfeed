@@ -159,6 +159,7 @@ func (c *client) Authenticate(token string) error {
 		if msg.State != AUTH_STATE_AUTHORIZED {
 			unauthorizedCount += 1
 			if unauthorizedCount > 1 {
+				c.removeMessageHandler(hid)
 				done <- ErrBadToken{Message: fmt.Sprintf("bad token: %s", token)}
 			}
 			return
@@ -322,15 +323,18 @@ func (c *client) writeForever(ctx context.Context) {
 func (c *client) readForever(ctx context.Context) {
 	defer c.wg.Done()
 	ingress := make(chan Message)
-	errCancel := make(chan error)
-	loop := true
+	readErr := make(chan error, 1) // buffered: inner goroutine never blocks on send
+
 	go func() {
 		defer c.conn.Close()
-		for loop {
+		for {
 			_, b, err := c.conn.ReadMessage()
 			if err != nil {
-				errCancel <- err
-				// FIXME: return? probably not
+				select {
+				case readErr <- err:
+				default:
+				}
+				return
 			}
 			c.Log(int(slog.LevelDebug), "read message", "data", string(b))
 			// parse the message into MessageBase and extract the type
@@ -346,10 +350,11 @@ func (c *client) readForever(ctx context.Context) {
 			}
 
 			// switch over all message types to deserialize in full
+			var m Message
 			switch mb.Type {
 			case MESSAGE_TYPE_ERROR:
-				var m MessageError
-				if err := json.Unmarshal(b, &m); err != nil {
+				var msg MessageError
+				if err := json.Unmarshal(b, &msg); err != nil {
 					c.Log(
 						int(slog.LevelError),
 						fmt.Sprintf("error deserializing message from server: %v", err),
@@ -359,12 +364,12 @@ func (c *client) readForever(ctx context.Context) {
 				}
 				c.Log(
 					int(slog.LevelError),
-					fmt.Sprintf("received error from server: %s: %s", m.Error, m.Message),
+					fmt.Sprintf("received error from server: %s: %s", msg.Error, msg.Message),
 				)
-				ingress <- m
+				m = msg
 			case MESSAGE_TYPE_KEEPALIVE:
-				var m MessageKeepalive
-				if err := json.Unmarshal(b, &m); err != nil {
+				var msg MessageKeepalive
+				if err := json.Unmarshal(b, &msg); err != nil {
 					c.Log(
 						int(slog.LevelError),
 						fmt.Sprintf("error deserializing message from server: %v", err),
@@ -372,10 +377,10 @@ func (c *client) readForever(ctx context.Context) {
 					)
 					continue
 				}
-				ingress <- m
+				m = msg
 			case MESSAGE_TYPE_SETUP:
-				var m MessageSetup
-				if err := json.Unmarshal(b, &m); err != nil {
+				var msg MessageSetup
+				if err := json.Unmarshal(b, &msg); err != nil {
 					c.Log(
 						int(slog.LevelError),
 						fmt.Sprintf("error deserializing message from server: %v", err),
@@ -383,10 +388,10 @@ func (c *client) readForever(ctx context.Context) {
 					)
 					continue
 				}
-				ingress <- m
+				m = msg
 			case MESSAGE_TYPE_AUTH_STATE:
-				var m MessageAuthState
-				if err = json.Unmarshal(b, &m); err != nil {
+				var msg MessageAuthState
+				if err = json.Unmarshal(b, &msg); err != nil {
 					c.Log(
 						int(slog.LevelError),
 						fmt.Sprintf("error deserializing message from server: %v", err),
@@ -394,10 +399,10 @@ func (c *client) readForever(ctx context.Context) {
 					)
 					continue
 				}
-				ingress <- m
+				m = msg
 			case MESSAGE_TYPE_CHANNEL_OPENED:
-				var m MessageChannelOpened
-				if err = json.Unmarshal(b, &m); err != nil {
+				var msg MessageChannelOpened
+				if err = json.Unmarshal(b, &msg); err != nil {
 					c.Log(
 						int(slog.LevelError),
 						fmt.Sprintf("error deserializing message from server: %v", err),
@@ -405,10 +410,10 @@ func (c *client) readForever(ctx context.Context) {
 					)
 					continue
 				}
-				ingress <- m
+				m = msg
 			case MESSAGE_TYPE_FEED_CONFIG:
-				var m MessageFeedConfig
-				if err = json.Unmarshal(b, &m); err != nil {
+				var msg MessageFeedConfig
+				if err = json.Unmarshal(b, &msg); err != nil {
 					c.Log(
 						int(slog.LevelError),
 						fmt.Sprintf("error deserializing message from server: %v", err),
@@ -416,10 +421,10 @@ func (c *client) readForever(ctx context.Context) {
 					)
 					continue
 				}
-				ingress <- m
+				m = msg
 			case MESSAGE_TYPE_FEED_DATA:
-				var m MessageFeedData
-				if err = json.Unmarshal(b, &m); err != nil {
+				var msg MessageFeedData
+				if err = json.Unmarshal(b, &msg); err != nil {
 					c.Log(
 						int(slog.LevelError),
 						fmt.Sprintf("error deserializing message from server: %v", err),
@@ -427,7 +432,7 @@ func (c *client) readForever(ctx context.Context) {
 					)
 					continue
 				}
-				ingress <- m
+				m = msg
 			default:
 				c.Log(
 					int(slog.LevelError),
@@ -435,21 +440,29 @@ func (c *client) readForever(ctx context.Context) {
 					"payload", string(b))
 				continue
 			}
+
+			// Send parsed message to the dispatch loop, but bail if
+			// the context is cancelled (outer loop already exited).
+			select {
+			case ingress <- m:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
-	for loop {
+	for {
 		select {
 		case <-ctx.Done():
 			c.Log(int(slog.LevelInfo), "read loop context cancelled, shutting down")
-			loop = false
+			return
 
-		case err := <-errCancel:
+		case err := <-readErr:
 			c.Log(int(slog.LevelInfo), "read loop error, shutting down")
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
 				c.Log(int(slog.LevelError), "read loop encountered unexpected error, shutting down", "error", err.Error())
 			}
-			loop = false
+			return
 
 		case m := <-ingress:
 			// copy the current state of the handlers
@@ -471,7 +484,6 @@ func (c *client) readForever(ctx context.Context) {
 			wg.Wait()
 		}
 	}
-
 }
 
 func (c *client) addMessageHandler(name string, f func(Message)) {

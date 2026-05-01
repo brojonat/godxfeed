@@ -36,9 +36,20 @@ async def lifespan(app: FastAPI):
         cfg.nats_user or "<anon>",
     )
     nc = await nats.connect(**connect_kwargs)
+
+    # Prefer JetStream for quote ingestion — gives replay capability on
+    # sidecar restart. Falls back to plain NATS core subscribe inside
+    # publish_loop if JetStream isn't available.
+    js = None
+    try:
+        js = nc.jetstream()
+        log.info("JetStream context acquired")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("JetStream unavailable, will use plain NATS: %s", exc)
+
     stop = asyncio.Event()
     task = asyncio.create_task(
-        publish_loop(nc, cfg.symbols, cfg.interval_s, stop),
+        publish_loop(nc, cfg.symbols, cfg.interval_s, stop, js=js),
         name="analytics-publish-loop",
     )
     app.state.nc = nc

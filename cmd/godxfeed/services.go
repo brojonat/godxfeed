@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	ghttp "github.com/brojonat/godxfeed/http"
 	"github.com/brojonat/godxfeed/service"
@@ -138,6 +139,16 @@ func serve_http(ctx *cli.Context) error {
 	// server. A sink failure doesn't take down the server — it just logs and
 	// exits.
 	if !ctx.Bool("minimal-setup") {
+		// Ensure the QUOTES JetStream stream exists before sinks or
+		// ingress start. The stream captures godxfeed.quote.> with a
+		// short retention window so analytic sidecars can replay recent
+		// quotes on restart. Non-fatal: if JetStream isn't available
+		// (e.g. account not configured), log and continue — plain NATS
+		// subscriptions still work.
+		if err := service.EnsureQuotesStream(ctx.Context, tts.NATS(), 10*time.Minute, log); err != nil {
+			log.Warn("JetStream stream setup failed; analytics sidecar will fall back to plain NATS", "err", err)
+		}
+
 		for _, dsn := range ctx.StringSlice("analytic-sink") {
 			sink, err := analytics.Build(ctx.Context, dsn, tts.NATS(), log)
 			if err != nil {

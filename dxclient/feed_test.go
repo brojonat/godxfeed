@@ -28,6 +28,10 @@ type fakeServer struct {
 	mu  sync.Mutex
 	// received holds every non-keepalive message received, newest last.
 	received []rawMessage
+	// validToken enables AUTH token checking. When non-empty, AUTH with a
+	// non-matching token gets two UNAUTHORIZED replies (matching real
+	// tastytrade behavior). When empty (default), all tokens are accepted.
+	validToken string
 }
 
 type rawMessage struct {
@@ -80,6 +84,21 @@ func newFakeServer(t *testing.T) *fakeServer {
 				})
 				conn.WriteMessage(websocket.TextMessage, reply)
 			case dxclient.MESSAGE_TYPE_AUTH:
+				if fs.validToken != "" {
+					var authMsg dxclient.MessageAuth
+					json.Unmarshal(b, &authMsg)
+					if authMsg.Token != fs.validToken {
+						// Real tastytrade sends two UNAUTHORIZED for a bad token.
+						for range 2 {
+							bad, _ := json.Marshal(dxclient.MessageAuthState{
+								MessageBase: dxclient.MessageBase{Type: dxclient.MESSAGE_TYPE_AUTH_STATE, Channel: 0},
+								State:       dxclient.AUTH_STATE_UNAUTHORIZED,
+							})
+							conn.WriteMessage(websocket.TextMessage, bad)
+						}
+						continue
+					}
+				}
 				reply, _ := json.Marshal(dxclient.MessageAuthState{
 					MessageBase: dxclient.MessageBase{Type: dxclient.MESSAGE_TYPE_AUTH_STATE, Channel: 0},
 					State:       dxclient.AUTH_STATE_AUTHORIZED,

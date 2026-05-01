@@ -51,6 +51,10 @@ class NatsClient(Protocol):
     async def subscribe(self, subject: str): ...  # returns a nats Subscription
 
 
+class JetStreamContext(Protocol):
+    async def subscribe(self, subject: str, **kwargs): ...  # returns a JetStream Subscription
+
+
 class NatsSubscription(Protocol):
     @property
     def messages(self): ...  # async iterator of nats Msg
@@ -140,21 +144,49 @@ def _parse_quote(raw: bytes) -> tuple[str, float] | None:
     return sym, 0.5 * (bid + ask)
 
 
+async def _subscribe_jetstream(
+    js: JetStreamContext,
+) -> NatsSubscription:
+    """Try JetStream push-subscribe with DeliverAll for replay on restart."""
+    from nats.js.api import DeliverPolicy
+
+    return await js.subscribe(
+        "godxfeed.quote.>",
+        deliver_policy=DeliverPolicy.ALL,
+        ordered_consumer=True,
+    )
+
+
 async def ingest_quotes(
     nc: NatsClient,
     buffers: dict[str, QuoteBuffer],
     buffer_window_s: float,
     stop_event: asyncio.Event,
+    js: JetStreamContext | None = None,
 ) -> None:
     """Own the NATS subscription until ``stop_event`` is set.
 
-    Phase 3 subject scheme: ``godxfeed.<event>.<symbol>``. Subscribing
-    to ``godxfeed.quote.>`` restricts us to quote events without pulling
-    in analytics (``godxfeed.analytics.…``) or other event types we
-    don't yet model, so there's no risk of self-feedback.
+    When a JetStream context is provided, subscribes via JetStream with
+    ``DeliverPolicy.ALL`` so the sidecar replays the stream's retention
+    window on restart (refilling its in-memory buffers). Falls back to
+    a plain NATS core subscription if JetStream is unavailable.
     """
-    sub = await nc.subscribe("godxfeed.quote.>")
-    log.info("ingest: subscribed to godxfeed.quote.>")
+    use_js = False
+    if js is not None:
+        try:
+            sub = await _subscribe_jetstream(js)
+            use_js = True
+            log.info("ingest: JetStream subscribe to godxfeed.quote.> (replay-capable)")
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "ingest: JetStream subscribe failed, falling back to plain NATS: %s",
+                exc,
+            )
+
+    if not use_js:
+        sub = await nc.subscribe("godxfeed.quote.>")
+        log.info("ingest: plain NATS subscribe to godxfeed.quote.>")
+
     try:
         async for msg in sub.messages:
             if stop_event.is_set():
@@ -287,6 +319,7 @@ async def publish_loop(
     interval_s: float,
     stop_event: asyncio.Event,
     cfg: PosteriorConfig | None = None,
+    js: JetStreamContext | None = None,
 ) -> None:
     """Run until ``stop_event`` is set.
 
@@ -294,6 +327,9 @@ async def publish_loop(
       * ``ingest_quotes`` — perpetual, owns the NATS subscription.
       * the outer loop here — refits each configured symbol every
         ``interval_s``.
+
+    When ``js`` is provided, quote ingestion uses JetStream with replay
+    capability. Falls back to plain NATS core subscribe otherwise.
     """
     cfg = cfg or PosteriorConfig.from_env()
     state = _LoopState()
@@ -310,7 +346,7 @@ async def publish_loop(
     )
 
     ingest = asyncio.create_task(
-        ingest_quotes(nc, state.buffers, cfg.buffer_window_s, stop_event),
+        ingest_quotes(nc, state.buffers, cfg.buffer_window_s, stop_event, js=js),
         name="analytics-ingest",
     )
 

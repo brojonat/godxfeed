@@ -20,6 +20,7 @@ from analytics.publisher import (
     _parse_quote,
     build_payload,
     fit_and_publish,
+    ingest_quotes,
     subject_for,
 )
 
@@ -89,12 +90,56 @@ def test_parse_quote_drops_garbage_bytes():
 # ─────────────────────────────────────────────────────────────────────
 
 
+class _FakeMsg:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+
+class _FakeSub:
+    """Fake NATS subscription that yields canned messages then stops."""
+
+    def __init__(self, msgs: list[bytes]) -> None:
+        self._msgs = msgs
+
+    @property
+    def messages(self):
+        return self._iter_msgs()
+
+    async def _iter_msgs(self):
+        for raw in self._msgs:
+            yield _FakeMsg(raw)
+
+    async def unsubscribe(self) -> None:
+        pass
+
+
 class _FakeNC:
-    def __init__(self) -> None:
+    def __init__(self, msgs: list[bytes] | None = None) -> None:
         self.published: list[tuple[str, bytes]] = []
+        self._msgs = msgs or []
+        self.subscribed_subject: str | None = None
 
     async def publish(self, subject: str, payload: bytes) -> None:
         self.published.append((subject, payload))
+
+    async def subscribe(self, subject: str):
+        self.subscribed_subject = subject
+        return _FakeSub(self._msgs)
+
+
+class _FakeJS:
+    """Fake JetStream context that returns a canned subscription."""
+
+    def __init__(self, msgs: list[bytes] | None = None, *, fail: bool = False) -> None:
+        self._msgs = msgs or []
+        self._fail = fail
+        self.subscribed_subject: str | None = None
+
+    async def subscribe(self, subject: str, **kwargs):
+        if self._fail:
+            raise RuntimeError("JetStream unavailable")
+        self.subscribed_subject = subject
+        return _FakeSub(self._msgs)
 
 
 @pytest.mark.asyncio
@@ -164,3 +209,56 @@ async def test_fit_and_publish_survives_fit_error(monkeypatch):
     result = await fit_and_publish(nc, "SPY", buf, cfg)
     assert result is None
     assert nc.published == []
+
+
+# ─────────────────────────────────────────────────────────────────────
+# ingest_quotes — JetStream vs plain NATS paths
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _quote_bytes(sym: str, bid: float, ask: float) -> bytes:
+    return json.dumps(
+        {"eventType": "Quote", "eventSymbol": sym, "bidPrice": bid, "askPrice": ask}
+    ).encode()
+
+
+@pytest.mark.asyncio
+async def test_ingest_quotes_jetstream_path():
+    """When a JetStream context is provided, ingestion uses it."""
+    msgs = [_quote_bytes("SPY", 100.0, 100.2)]
+    nc = _FakeNC()
+    js = _FakeJS(msgs)
+    buffers: dict[str, QuoteBuffer] = {}
+    stop = asyncio.Event()
+    await ingest_quotes(nc, buffers, 60.0, stop, js=js)
+    assert js.subscribed_subject == "godxfeed.quote.>"
+    assert nc.subscribed_subject is None  # did NOT fall back to plain NATS
+    assert "SPY" in buffers
+    assert len(buffers["SPY"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_ingest_quotes_fallback_on_js_failure():
+    """If JetStream subscribe fails, falls back to plain NATS."""
+    msgs = [_quote_bytes("AAPL", 150.0, 150.2)]
+    nc = _FakeNC(msgs)
+    js = _FakeJS(fail=True)
+    buffers: dict[str, QuoteBuffer] = {}
+    stop = asyncio.Event()
+    await ingest_quotes(nc, buffers, 60.0, stop, js=js)
+    assert nc.subscribed_subject == "godxfeed.quote.>"
+    assert "AAPL" in buffers
+    assert len(buffers["AAPL"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_ingest_quotes_plain_nats_when_no_js():
+    """Without a JetStream context, ingestion uses plain NATS."""
+    msgs = [_quote_bytes("QQQ", 300.0, 300.4)]
+    nc = _FakeNC(msgs)
+    buffers: dict[str, QuoteBuffer] = {}
+    stop = asyncio.Event()
+    await ingest_quotes(nc, buffers, 60.0, stop, js=None)
+    assert nc.subscribed_subject == "godxfeed.quote.>"
+    assert "QQQ" in buffers
+    assert len(buffers["QQQ"]) == 1
